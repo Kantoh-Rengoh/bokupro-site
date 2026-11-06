@@ -451,20 +451,21 @@ def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
             hist_vals = [float(h["overall100"]) for h in hs]
             hist_max = max(hist_vals + [current])
             if peak_age is not None and age > int(peak_age):
-                # 設定ピーク年齢を過ぎた選手：サイトの予測最大は過去の最高値。
-                # 編成提案用には「今後の最高」モデル（過去の最高値を含めない）を使う
-                pmax = hist_max
-                reach = ages[hist_vals.index(max(hist_vals))] if max(hist_vals) >= current else age
-                fut = max(int(round(float(m_fut.predict(x)[0]) + 0.5 * excess)), current)
+                # 設定ピーク年齢を過ぎた選手：予測最大は「今後の最高」モデル（過去の最高値を含めない）。
+                # 状態の判定だけは、実際に最高だった年齢（過去）を使う
+                reach_status = ages[hist_vals.index(max(hist_vals))] if max(hist_vals) >= current else age
+                pmax = max(int(round(float(m_fut.predict(x)[0]) + 0.5 * excess)), current)
+                reach = max(int(round(page)), age) if pmax > current else age
             else:
                 pmax = max(int(round(pmax)), current)
                 reach = max(int(round(page)), age) if pmax > current else age
-                fut = pmax
+                reach_status = reach
+            fut = pmax
             pmax = int(round(pmax))
             if reach is None:
                 reach = age
         upside = max(0, pmax - current)
-        st = status_of(is_rookie, age, reach, peak_age)
+        st = status_of(is_rookie, age, reach_status if not is_rookie else reach, peak_age)
         main, subs, posstr = positions(p, role)
         ext = is_external(p, team_name)
         dev = bool(p.get("developmentContract"))
