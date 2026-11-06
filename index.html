@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>ESY 選手成長予測</title>
+<meta name="description" content="ぼくのプロ野球 選手成長予測ダッシュボード">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script>
+  // ページが描画される前にテーマを決める（ちらつき防止）
+  (function () {
+    try {
+      var t = localStorage.getItem('bp-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+<div class="bp" id="app">
+  <header class="hero">
+    <button class="theme" id="themeBtn" type="button" aria-label="ライト／ダーク切り替え" title="ライト／ダーク切り替え"><span class="ico"></span></button>
+    <span class="eyebrow">ESY Co., ltd ／ 育成レポート</span>
+    <h1>ESY 選手成長予測</h1>
+    <p class="lede">今回の新人は<b id="s_new">—</b>人。新人で最も期待できるのは<b id="s_topnew">—</b>（予測最大総合力<b id="s_topnewv">—</b>）です。</p>
+    <button class="jump" type="button" data-jump="qa">質問ボックスを見る ›</button>
+  </header>
+
+  <div class="tiles">
+    <div class="tile t1"><div class="lab">今回の新人</div><div class="num"><span id="t_new">—</span><span class="unit">人</span></div></div>
+    <div class="tile t2"><div class="lab">伸び盛り</div><div class="num"><span id="t_grow">—</span><span class="unit">人</span></div></div>
+    <div class="tile t3"><div class="lab">予測最大が<span id="th_star">—</span>以上</div><div class="num"><span id="t_star">—</span><span class="unit">人</span></div></div>
+    <div class="tile t4"><div class="lab">ピーク・下降期</div><div class="num"><span id="t_peak">—</span><span class="unit">人</span></div></div>
+  </div>
+
+  <section class="card" id="list">
+    <h2>選手一覧</h2>
+    <div class="ctl">
+      <span class="lbl">状態</span>
+      <button class="chip" type="button" data-group="status" data-value="" aria-pressed="true">全員</button>
+      <button class="chip" type="button" data-group="status" data-value="新人" aria-pressed="false">新人</button>
+      <button class="chip" type="button" data-group="status" data-value="伸び盛り" aria-pressed="false">伸び盛り</button>
+      <button class="chip" type="button" data-group="status" data-value="成熟期" aria-pressed="false">成熟期</button>
+      <button class="chip" type="button" data-group="status" data-value="ピーク" aria-pressed="false">ピーク</button>
+      <button class="chip" type="button" data-group="status" data-value="下降期" aria-pressed="false">下降期</button>
+    </div>
+    <div class="ctl">
+      <span class="lbl">ポジション</span>
+      <button class="chip" type="button" data-group="role" data-value="" aria-pressed="true">全ポジション</button>
+      <button class="chip" type="button" data-group="role" data-value="投手" aria-pressed="false">投手</button>
+      <button class="chip" type="button" data-group="role" data-value="捕手" aria-pressed="false">捕手</button>
+      <button class="chip" type="button" data-group="role" data-value="内野手" aria-pressed="false">内野手</button>
+      <button class="chip" type="button" data-group="role" data-value="外野手" aria-pressed="false">外野手</button>
+    </div>
+    <div class="ctl">
+      <span class="lbl">区分</span>
+      <button class="chip" type="button" data-group="kubun" data-value="" aria-pressed="true">全区分</button>
+      <button class="chip" type="button" data-group="kubun" data-value="支配下" aria-pressed="false">支配下</button>
+      <button class="chip" type="button" data-group="kubun" data-value="育成" aria-pressed="false">育成</button>
+      <button class="chip" type="button" data-group="kubun" data-value="移籍・外国人" aria-pressed="false">移籍・外国人</button>
+    </div>
+    <div class="ctl">
+      <span class="lbl">三軍</span>
+      <button class="chip" type="button" data-group="tri" data-value="" aria-pressed="true">指定なし</button>
+      <button class="chip" type="button" data-group="tri" data-value="rec" aria-pressed="false">三軍推奨</button>
+      <button class="chip" type="button" data-group="tri" data-value="in" aria-pressed="false">送る（推奨・未配置）</button>
+      <button class="chip" type="button" data-group="tri" data-value="out" aria-pressed="false">戻す（配置・推奨外）</button>
+    </div>
+    <div class="ctl">
+      <span class="lbl">ドラフト年</span>
+      <select class="sel" id="dyear" aria-label="ドラフト年で絞り込み"></select>
+    </div>
+    <input class="search" id="search" type="search" placeholder="名前・背番号で検索" aria-label="名前・背番号で検索" autocomplete="off">
+    <div class="count">表示中 <b id="shown">—</b> 人</div>
+    <div class="ctl">
+      <span class="lbl">並び順</span>
+      <select class="sel" id="sortsel" aria-label="並び順">
+        <option value="予測最大">予測最大</option>
+        <option value="前年比">前年比</option>
+        <option value="現在">総合</option>
+        <option value="伸びしろ">伸びしろ</option>
+        <option value="年齢">年齢</option>
+        <option value="ドラフト年">ドラフト年</option>
+        <option value="背番号">背番号</option>
+        <option value="状態">状態</option>
+      </select>
+      <button class="chip" type="button" data-group="dir" data-value="-1" aria-pressed="true">高い順</button>
+      <button class="chip" type="button" data-group="dir" data-value="1" aria-pressed="false">低い順</button>
+    </div>
+    <div class="plist" id="rows"><div class="loading">データを読み込んでいます…</div></div>
+    <div class="legend"><span style="--k:var(--s-new)"><i></i>新人</span><span style="--k:var(--s-grow)"><i></i>伸び盛り：最高到達までまだ余裕あり</span><span style="--k:var(--s-mid)"><i></i>成熟期：最高到達が目前</span><span style="--k:var(--s-peak)"><i></i>ピーク：最高到達の前後</span><span style="--k:var(--s-down)"><i></i>下降期：最高を過ぎた</span></div>
+    <div class="legend" id="ablegend"></div>
+    <p class="note" id="note"></p>
+  </section>
+
+  <section class="card qa" id="qa">
+    <h2>質問ボックス</h2>
+    <div class="count">これまでの質問 <b id="qa_n">—</b> 件　タップで回答が開きます</div>
+    <div class="qalist" id="qalist"></div>
+  </section>
+
+  <footer class="pagefoot">
+    <span id="datainfo"></span>
+    <button class="totop" type="button" data-jump="app">▲ 上へ戻る</button>
+  </footer>
+</div>
+<script src="js/app.js"></script>
+</body>
+</html>
