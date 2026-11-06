@@ -19,9 +19,19 @@
     <h1>ESY 選手成長予測</h1>
     <p class="lede">今回の新人は<b id="s_new">—</b>人。新人で最も期待できるのは<b id="s_topnew">—</b>（予測最大総合力<b id="s_topnewv">—</b>）です。</p>
     <p class="asof" id="asof"></p>
-    <button class="jump" type="button" data-jump="qa">質問ボックスを見る ›</button>
+    <div class="jumps">
+      <button class="jump" type="button" data-tab="plan">オフの編成提案を見る ›</button>
+      <button class="jump" type="button" data-tab="qa">質問ボックスを見る ›</button>
+    </div>
   </header>
 
+  <nav class="tabs" id="tabs" aria-label="表示の切り替え">
+    <button class="tab" type="button" data-tab="growth" aria-selected="true">成長予測</button>
+    <button class="tab" type="button" data-tab="plan" aria-selected="false">オフの編成提案</button>
+    <button class="tab" type="button" data-tab="qa" aria-selected="false">質問ボックス</button>
+  </nav>
+
+  <div class="panel" id="tab-growth">
   <div class="tiles">
     <div class="tile t1"><div class="lab">今回の新人</div><div class="num"><span id="t_new">—</span><span class="unit">人</span></div></div>
     <div class="tile t2"><div class="lab">伸び盛り</div><div class="num"><span id="t_grow">—</span><span class="unit">人</span></div></div>
@@ -88,12 +98,33 @@
     <div class="legend" id="ablegend"></div>
     <p class="note" id="note"></p>
   </section>
+  </div>
 
+  <div class="panel" id="tab-plan" hidden>
+  <section class="card plan" id="plan">
+    <h2>オフの編成提案</h2>
+    <div class="count" id="plan_asof">読み込んでいます…</div>
+    <div class="hcwrap" id="hc"></div>
+    <div class="ctl dpick" id="dpick" hidden>
+      <span class="lbl">ドラフトの指名人数</span>
+      <label class="dpl">支配下 <input class="dpi" id="dp_reg" type="number" inputmode="numeric" min="0" max="20" value="0"></label>
+      <label class="dpl">育成 <input class="dpi" id="dp_dev" type="number" inputmode="numeric" min="0" max="20" value="0"></label>
+      <span class="count">入れると「ドラフト後」の人数が変わります</span>
+    </div>
+    <div class="legend" id="plan_legend"></div>
+    <div id="plan_lists"></div>
+    <div id="dft"></div>
+    <p class="note" id="plan_note"></p>
+  </section>
+  </div>
+
+  <div class="panel" id="tab-qa" hidden>
   <section class="card qa" id="qa">
     <h2>質問ボックス</h2>
     <div class="count">これまでの質問 <b id="qa_n">—</b> 件　タップで回答が開きます</div>
     <div class="qalist" id="qalist"></div>
   </section>
+  </div>
 
   <footer class="pagefoot">
     <span id="datainfo"></span>

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 build.py — 「ぼくのプロ野球」のセーブデータ（.tfosave）から、サイト用の
-docs/players.json と docs/meta.json を作る。
+docs/players.json と docs/meta.json（と docs/data/roster_plan.json）を作る。
 
 使い方:  python scripts/build.py
   saves/ の中で「ゲーム内の日付」が一番新しい .tfosave を自動で選びます。
@@ -15,6 +15,7 @@ docs/players.json と docs/meta.json を作る。
   3. 引退選手の経歴から「生涯最高の総合」と「到達年齢」を予測するモデルを学習する
   4. 自チーム全員の予測・状態・前年比・三軍推奨・練習メニューを計算する
   5. docs/players.json / docs/meta.json を書き出す
+  6. オフの編成提案（roster_plan.py）を docs/data/roster_plan.json に書き出す
 """
 import sys, re, json, math, shutil, datetime, warnings
 from pathlib import Path
@@ -287,8 +288,10 @@ FEATURE_NAMES = ["age", "overall", "overall_first", "grade", "devPot", "peakAge"
 
 
 def build_training(players):
-    """引退選手（経歴が揃っている）から学習データを作る。戻り値: X, y_max, y_age, groups, 新人用 X/y"""
-    X, ymax, yage, grp = [], [], [], []
+    """引退選手（経歴が揃っている）から学習データを作る。
+    戻り値: (X, y_max, y_age, y_future, groups), 新人用 (X, y_max, y_age, y_future, groups), 年齢別の平均成長
+    y_max は生涯の最高総合、y_future は「その年以降」の最高総合（編成提案の伸びしろに使う）"""
+    X, ymax, yage, yfut, grp = [], [], [], [], []
     Xr, ymax_r, yage_r, grp_r = [], [], [], []
     growth_by_age = {}
     for p in players:
@@ -304,13 +307,13 @@ def build_training(players):
         sf = static_features(p)
         pid = p.get("id")
         for i, (h, a, o) in enumerate(zip(hs, ages, ovs)):
-            X.append([a, o, ovs[0]] + sf); ymax.append(mx); yage.append(reach); grp.append(pid)
+            X.append([a, o, ovs[0]] + sf); ymax.append(mx); yage.append(reach); yfut.append(max(ovs[i:])); grp.append(pid)
             if i + 1 < len(hs) and ages[i + 1] == a + 1:
                 growth_by_age.setdefault(a, []).append(ovs[i + 1] - o)
         Xr.append([ages[0], ovs[0]] + sf); ymax_r.append(mx); yage_r.append(reach); grp_r.append(pid)
     gba = {a: float(np.mean(v)) for a, v in growth_by_age.items() if len(v) >= 5}
-    return (np.array(X, float), np.array(ymax, float), np.array(yage, float), np.array(grp)), \
-           (np.array(Xr, float), np.array(ymax_r, float), np.array(yage_r, float), np.array(grp_r)), gba
+    return (np.array(X, float), np.array(ymax, float), np.array(yage, float), np.array(yfut, float), np.array(grp)), \
+           (np.array(Xr, float), np.array(ymax_r, float), np.array(yage_r, float), None, np.array(grp_r)), gba
 
 
 def make_gbr():
@@ -332,12 +335,14 @@ class Imputer:
 
 
 def fit_predictors(train, label):
+    """戻り値: (imputer, 最高総合モデル, 到達年齢モデル, 誤差の報告, 今後の最高モデル or None)"""
     from sklearn.model_selection import GroupKFold
-    X, ymax, yage, grp = train
+    X, ymax, yage, yfut, grp = train
     imp = Imputer(X)
     Xi = imp(X)
     rep = {}
-    for name, y in (("最高総合", ymax), ("到達年齢", yage)):
+    targets = [("最高総合", ymax), ("到達年齢", yage)] + ([("今後の最高", yfut)] if yfut is not None else [])
+    for name, y in targets:
         errs = []
         for tr, te in GroupKFold(n_splits=5).split(Xi, y, grp):
             m = make_gbr().fit(Xi[tr], y[tr])
@@ -346,7 +351,8 @@ def fit_predictors(train, label):
         log(f"  {label}{name}: 選手単位の交差検証で平均誤差 {np.mean(errs):.2f}（{len(y)} 件）")
     m_max = make_gbr().fit(Xi, ymax)
     m_age = make_gbr().fit(Xi, yage)
-    return imp, m_max, m_age, rep
+    m_fut = make_gbr().fit(Xi, yfut) if yfut is not None else None
+    return imp, m_max, m_age, rep, m_fut
 
 
 # ----------------------------------------------------------------------
@@ -400,8 +406,8 @@ def status_of(is_rookie, age, reach_age, peak_age):
 
 
 def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
-    imp, m_max, m_age, _ = pred
-    imp_r, m_max_r, m_age_r, _ = pred_rookie
+    imp, m_max, m_age, _, m_fut = pred
+    imp_r, m_max_r, m_age_r, _, _ = pred_rookie
     rows = []
     for p in own:
         role = p.get("role")
@@ -430,6 +436,7 @@ def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
             pmax = max(int(round(pmax)), current)
             reach = max(int(round(page)), age) if pmax > current else age
             hist_max = current
+            fut = pmax
         else:
             ages = player_ages(p, hs)
             last = hs[-1]
@@ -444,11 +451,15 @@ def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
             hist_vals = [float(h["overall100"]) for h in hs]
             hist_max = max(hist_vals + [current])
             if peak_age is not None and age > int(peak_age):
+                # 設定ピーク年齢を過ぎた選手：サイトの予測最大は過去の最高値。
+                # 編成提案用には「今後の最高」モデル（過去の最高値を含めない）を使う
                 pmax = hist_max
                 reach = ages[hist_vals.index(max(hist_vals))] if max(hist_vals) >= current else age
+                fut = max(int(round(float(m_fut.predict(x)[0]) + 0.5 * excess)), current)
             else:
                 pmax = max(int(round(pmax)), current)
                 reach = max(int(round(page)), age) if pmax > current else age
+                fut = pmax
             pmax = int(round(pmax))
             if reach is None:
                 reach = age
@@ -506,6 +517,8 @@ def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
                 best, best_lab, best_val, best_score = menu_map[ab], lab, int(p.get(ab)), score
         row["推奨メニュー"] = f"{best}（{best_lab} {best_val}）" if best else ""
         row["_hist_max"] = hist_max
+        row["_fut"] = fut      # 今後の最高総合の予測（編成提案用、書き出し前に消す）
+        row["_p"] = p          # 元の選手データ（同上）
         rows.append(row)
     return rows
 
@@ -527,11 +540,11 @@ def assign_third_squad(rows):
 # 5. 本体
 # ----------------------------------------------------------------------
 def main():
-    log("1/5 セーブデータを探しています…")
+    log("1/6 セーブデータを探しています…")
     save_path, game_dt = pick_newest_save()
     log(f"  使用するセーブデータ: {save_path.name}")
 
-    log("2/5 セーブデータを展開しています…")
+    log("2/6 セーブデータを展開しています…")
     parts = decode_save(save_path)
     p0, own, others, p3 = parts
     if not isinstance(own, list) or not own:
@@ -542,21 +555,26 @@ def main():
     log(f"  球団: {team_name}　ゲーム内日付: {game_dt.year}年{game_dt.month}月{game_dt.day}日（{phase}）")
     log(f"  自チーム {len(own)} 人、他球団 {len(others)} 人、引退選手 {len(retired)} 人")
 
-    log("3/5 能力値から総合を求める変換を学習しています…")
+    log("3/6 能力値から総合を求める変換を学習しています…")
     ov_models, ov_report = fit_overall_models(list(own) + list(others) + list(retired))
 
-    log("4/5 生涯最高の総合と到達年齢の予測モデルを学習しています…")
+    log("4/6 生涯最高の総合と到達年齢の予測モデルを学習しています…")
     train, train_rookie, gba = build_training(list(retired) + [p for p in own if int(p.get("age") or 0) >= 34])
     if len(train[0]) < 200:
         die(f"学習に使える引退選手の経歴が少なすぎます（{len(train[0])} 件）。")
     pred = fit_predictors(train, "既存選手の")
     pred_rookie = fit_predictors(train_rookie, "新人の")
 
-    log("5/5 自チームの選手を計算しています…")
+    log("5/6 自チームの選手を計算しています…")
     rows = compute_players(own, team_name, ov_models, pred, pred_rookie, gba)
     limit, assigned = assign_third_squad(rows)
+
+    log("6/6 オフの編成提案を作っています…")
+    import roster_plan
+    roster_plan.build_plan(roster_plan_build_module(), p0, own, rows, retired, ov_models, game_dt, DOCS / "data" / "roster_plan.json")
     for r in rows:
-        r.pop("_hist_max", None)
+        for k in ("_hist_max", "_fut", "_p"):
+            r.pop(k, None)
     rows.sort(key=lambda r: (-r["予測最大"], -r["現在"]))
 
     season_year = max(int(h["year"]) for p in own for h in hist_sorted(p)) if any(hist_sorted(p) for p in own) else None
@@ -593,8 +611,14 @@ def main():
     log("  ゲーム画面と見比べる用（総合の計算値）:")
     for r in rows[:5]:
         log(f"    {r['名前']}（{r['役割']}・{r['所属']}）総合 {r['現在']}")
-    log(f"  書き出し: {DOCS / 'players.json'}, {DOCS / 'meta.json'}")
+    log(f"  書き出し: {DOCS / 'players.json'}, {DOCS / 'meta.json'}, {DOCS / 'data' / 'roster_plan.json'}")
+
+
+def roster_plan_build_module():
+    """roster_plan.py に渡す「このファイルの道具一式」"""
+    return sys.modules[__name__]
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     main()

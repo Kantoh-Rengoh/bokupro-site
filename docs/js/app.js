@@ -1,7 +1,7 @@
 /* ============================================================
    ESY 選手成長予測  アプリ本体
-   - data/players.json と data/qa.json を読み込んで表示する
-   - 毎年の更新は data/players.json を差し替えるだけでOK
+   - players.json / qa.json / meta.json / data/roster_plan.json を読み込んで表示する
+   - これらは build.py が自動生成する（qa.json だけ手で書く）
    ============================================================ */
 (function () {
   'use strict';
@@ -11,6 +11,7 @@
   const PLAYERS_URL = 'players.json';
   const QA_URL = 'qa.json';
   const META_URL = 'meta.json';   // build.py が出力する更新情報（ゲーム内日付など）
+  const PLAN_URL = 'data/roster_plan.json';  // roster_plan.py が出力するオフの編成提案
   // meta.json が無いときの文言。{Y} は開幕年に置き換わる。
   const NOTE_SAVE = '{Y}年シーズン';
   const NOTE_BASE = '{Y}年開幕時';
@@ -31,6 +32,11 @@
   let PLAYERS = null;   // 選手データ（配列）
   let QA = null;        // 質問データ（配列）
   let META = null;      // 更新情報（meta.json、無くても動く）
+  let PLAN = null;      // オフの編成提案（data/roster_plan.json、無くても動く）
+  // 判定の色（推奨＝赤系、検討＝黄系、昇格＝緑系、例外＝灰色、育成へ＝青系）
+  const JD_VAR = { '推奨': 'var(--color-bad)', '自由契約': 'var(--color-bad)', '検討': 'var(--color-warn)', '育成再契約': 'var(--color-warn)',
+    '即昇格': 'var(--color-ok)', '先行昇格': 'var(--color-ok)', '支配下': 'var(--color-ok)', '育成へ': 'var(--s-new)',
+    '残留（例外）': 'var(--c7)', '残留（検証中）': 'var(--c7)', '1位': 'var(--gold)', '外れ1位': 'var(--c5)' };
 
   // ---------- 小さな道具 ----------
   const $ = (id) => document.getElementById(id);
@@ -287,6 +293,165 @@
     return body;
   }
 
+  // ---------- タブ ----------
+  const TABS = ['growth', 'plan', 'qa'];
+  function showTab(name, push) {
+    if (!TABS.includes(name)) name = 'growth';
+    TABS.forEach(t => { const p = $('tab-' + t); if (p) p.hidden = t !== name; });
+    document.querySelectorAll('.tab').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+    if (push) { try { history.replaceState(null, '', name === 'growth' ? location.pathname : '#' + name); } catch (e) { /* 無視 */ } }
+  }
+  function setupTabs() {
+    document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => {
+      showTab(b.dataset.tab, true);
+      if (b.classList.contains('jump')) { const t = $('tabs'); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    }));
+    window.addEventListener('hashchange', () => showTab(location.hash.replace('#', ''), false));
+    showTab(location.hash.replace('#', ''), false);
+  }
+
+  // ---------- オフの編成提案 ----------
+  function jdPill(text) {
+    const s = el('span', 'pill', text);
+    s.style.setProperty('--k', JD_VAR[text] || 'var(--c7)');
+    return s;
+  }
+  function cell(tr, label, content, cls) {
+    const td = el('td', cls || '');
+    td.dataset.l = label;
+    if (content instanceof Node) td.append(content); else td.textContent = isNil(content) ? '—' : String(content);
+    tr.append(td);
+    return td;
+  }
+  function posMark(p) {
+    const s = el('span', 'pz', String(p || '')); s.style.setProperty('--pc', POS_C[p] || 'var(--c7)'); return s;
+  }
+  function nameCell(r, extra) {
+    const w = el('span');
+    w.append(el('span', null, String(r['名前'])));
+    if (!isNil(r['背番号'])) w.append(el('span', 'un', '（' + String(r['背番号']) + '）'));
+    if (r['外国人']) w.append(el('span', 'fo', '外国人'));
+    (extra || []).forEach(x => w.append(x));
+    return w;
+  }
+  function numCell(tr, label, v, cls) {
+    const b = el('b', null, isNil(v) ? '—' : String(v));
+    return cell(tr, label, b, 'num ' + (cls || ''));
+  }
+  function playerTable(rows) {
+    const t = el('table', 'ptab');
+    const th = el('thead'); const hr = el('tr');
+    ['選手（背番号）', '年齢', 'ポジ', '所属', '総合', '予測最大', '伸びしろ', '判定', '理由'].forEach(h => hr.append(el('th', null, h)));
+    th.append(hr); t.append(th);
+    const tb = el('tbody');
+    for (const r of rows) {
+      const tr = el('tr'); tr.style.setProperty('--k', JD_VAR[r['判定']] || 'var(--c7)');
+      cell(tr, '選手', nameCell(r), 'nm');
+      numCell(tr, '年齢', r['年齢']);
+      cell(tr, 'ポジ', posMark(r['ポジ']));
+      cell(tr, '所属', r['所属']);
+      numCell(tr, '総合', r['総合']);
+      numCell(tr, '予測最大', r['予測最大'], 'pm');
+      numCell(tr, '伸びしろ', '+' + String(r['伸びしろ']), 'up');
+      const jd = el('span'); jd.append(jdPill(r['判定']));
+      if (r['境界']) { const m = el('span', 'bd', '境界'); m.title = '予測最大がしきい値ぎりぎり（±1）。予測の誤差で判定が入れ替わることがあります'; jd.append(m); }
+      cell(tr, '判定', jd, 'jd');
+      cell(tr, '理由', el('small', null, String(r['理由'] || '') + (r['境界'] ? '（しきい値ぎりぎり）' : '')), 'rs');
+      tb.append(tr);
+    }
+    t.append(tb);
+    return t;
+  }
+  function draftTable(rows) {
+    const t = el('table', 'ptab dtab');
+    const th = el('thead'); const hr = el('tr');
+    ['選手', '年齢', 'ポジ', '経歴', '総合', '予測最大', '注目度', '関心数', '1位候補', '推奨'].forEach(h => hr.append(el('th', null, h)));
+    th.append(hr); t.append(th);
+    const tb = el('tbody');
+    for (const r of rows) {
+      const tr = el('tr' ); if (r['対象外']) tr.classList.add('dim');
+      tr.style.setProperty('--k', r['推奨'] ? JD_VAR[r['推奨']] : r['対象外'] ? 'var(--c7)' : 'var(--p-p)');
+      const marks = [];
+      if (r['同姓']) { const m = el('span', 'mk', '同姓あり'); m.title = String(r['同姓']); marks.push(m); }
+      if (r['公言']) { const m = el('span', 'mk', '1位公言あり'); m.title = String(r['公言']) + ' が1位指名を公言'; m.style.color = 'var(--c6)'; m.style.borderColor = 'var(--c6)'; marks.push(m); }
+      cell(tr, '選手', nameCell(r, marks), 'nm');
+      numCell(tr, '年齢', r['年齢']);
+      cell(tr, 'ポジ', posMark(r['ポジ']));
+      cell(tr, '経歴', r['経歴']);
+      numCell(tr, '総合', r['総合']);
+      numCell(tr, '予測最大', r['予測最大'], 'pm');
+      const g = el('span', 'grd', String(r['注目度'] || '-')); g.style.setProperty('--k', GR_VAR[r['注目度']] || 'var(--c7)');
+      cell(tr, '注目度', g);
+      numCell(tr, '関心数', r['関心数']);
+      numCell(tr, '1位候補', r['1位候補数']);
+      const jd = el('span');
+      if (r['推奨']) jd.append(jdPill(r['推奨'])); else if (r['対象外']) jd.append(el('small', null, '対象外（予測最大が低い）')); else jd.textContent = '';
+      cell(tr, '推奨', jd, 'jd');
+      if (r['同姓']) { const s = el('small', null, '同姓の候補：' + String(r['同姓'])); cell(tr, '', s, 'rs'); }
+      tb.append(tr);
+    }
+    t.append(tb);
+    return t;
+  }
+  function hcClass(kind, v, lim) {
+    if (kind === '支配下' || kind === '育成') { if (v > lim['支配下' === kind ? '支配下' : '育成']) return 'over'; }
+    if (kind === '育成' && v > lim['育成目標']) return 'near';
+    if (kind === '支配下' || kind === '育成') return 'ok';
+    return '';
+  }
+  function drawHeadcount() {
+    const box = $('hc'); box.replaceChildren();
+    const hc = PLAN['人数']; if (!hc) return;
+    const lim = hc['上限'];
+    const dpReg = Math.max(0, Number($('dp_reg').value) || 0), dpDev = Math.max(0, Number($('dp_dev').value) || 0);
+    const after = hc['提案後'];
+    const post = { '支配下': after['支配下'] + dpReg, '育成': after['育成'] + dpDev };
+    post['合計'] = post['支配下'] + post['育成']; post['三軍上限'] = post['合計'] - lim['三軍の基準'];
+    const t = el('table', 'hc');
+    const hr = el('tr'); ['', '現在', '提案後', 'ドラフト後', '上限'].forEach(h => hr.append(el('th', null, h))); t.append(hr);
+    const limText = { '支配下': String(lim['支配下']), '育成': `${lim['育成']}`, '合計': '—', '三軍上限': `合計−${lim['三軍の基準']}` };
+    for (const k of ['支配下', '育成', '合計', '三軍上限']) {
+      const tr = el('tr'); tr.append(el('td', null, k));
+      for (const src of [hc['現在'], after, post]) {
+        const td = el('td', hcClass(k, src[k], lim)); td.append(el('b', null, String(src[k]))); tr.append(td);
+      }
+      const tl = el('td'); tl.append(el('b', null, limText[k]));
+      if (k === '育成') tl.append(el('small', null, `目標${lim['育成目標']}以下`));
+      tr.append(tl); t.append(tr);
+    }
+    box.append(t);
+    const b = PLAN['人数']['内訳'] || {};
+    const note = el('div', 'count');
+    note.textContent = `提案後 ＝ 支配下→育成 ${b['支配下→育成']}人、支配下→自由契約 ${b['支配下→自由契約']}人（検討 ${b['支配下→自由契約（検討）']}人は含めず）、育成→支配下 ${b['育成→支配下']}人、育成→自由契約 ${b['育成→自由契約']}人、満了→支配下 ${b['満了→支配下']}人・育成再契約 ${b['満了→育成再契約']}人・自由契約 ${b['満了→自由契約']}人 を実行した場合`;
+    box.append(note);
+  }
+  function drawPlan() {
+    const asof = $('plan_asof');
+    if (!PLAN) { asof.textContent = '編成提案のデータ（data/roster_plan.json）がまだありません。セーブデータをアップロードすると自動で作られます。'; return; }
+    asof.textContent = `ゲーム内 ${PLAN['ゲーム内日付']}${PLAN['フェーズ'] ? '・' + PLAN['フェーズ'] : ''} のセーブデータから作成`;
+    $('dpick').hidden = false;
+    drawHeadcount();
+    $('plan_legend').replaceChildren(...[['推奨・自由契約', 'var(--color-bad)'], ['検討・育成再契約', 'var(--color-warn)'], ['昇格・支配下', 'var(--color-ok)'], ['育成へ', 'var(--s-new)'], ['例外・残留', 'var(--c7)']].map(([t, c]) => { const s = el('span'); s.style.setProperty('--k', c); s.append(el('i'), document.createTextNode(t)); return s; }));
+    const lists = $('plan_lists'); lists.replaceChildren();
+    for (const L of PLAN['一覧'] || []) {
+      const sec = el('div', 'pls');
+      const h = el('h3'); h.append(el('span', 'no', String(L['番号'])), document.createTextNode(String(L['題'])), el('span', 'cnt', `${L['行'].length}人`)); sec.append(h);
+      sec.append(el('p', 'desc', String(L['説明'] || '')));
+      if (L['行'].length) sec.append(playerTable(L['行'])); else sec.append(el('div', 'none', '該当する選手はいません。'));
+      lists.append(sec);
+    }
+    const D = PLAN['ドラフト'] || {}; const box = $('dft'); box.replaceChildren();
+    const sec = el('div', 'pls');
+    const h = el('h3'); h.append(el('span', 'no', '6'), document.createTextNode('ドラフト候補（中卒・高卒で将来性A）'), el('span', 'cnt', `${(D['候補'] || []).length}人／全候補 ${D['候補数'] || 0}人`)); sec.append(h);
+    sec.append(el('p', 'desc', `他球団（${D['他球団数'] || 0}球団）の関心一覧から「関心数」と「1位候補にしている球団数」を数えています。予測最大が低い候補は薄く表示。1位の推奨は、1位候補にしている球団が少ない候補の中で予測最大が最も高い選手と、その抽選に外れた場合の次点です。`));
+    if (D['推奨'] && D['推奨']['文']) { const r = el('div', 'rec'); r.append(el('span', 'rl', '1位指名の推奨'), document.createTextNode(String(D['推奨']['文']))); sec.append(r); }
+    if (D['公言'] && D['公言']['球団']) { const d = el('div', 'decl'); d.append(document.createTextNode('1位指名の公言：'), el('b', null, String(D['公言']['球団'])), document.createTextNode(' → '), el('b', null, String(D['公言']['選手'] || '?'))); sec.append(d); }
+    if ((D['候補'] || []).length) sec.append(draftTable(D['候補'])); else sec.append(el('div', 'none', 'ドラフト候補のデータがありません（ドラフト後のセーブデータなど）。'));
+    box.append(sec);
+    $('plan_note').textContent = (PLAN['注意'] || '') + (D['予測誤差'] ? ` ドラフト候補の予測誤差（平均）：±${D['予測誤差']}。` : '');
+    ['dp_reg', 'dp_dev'].forEach(id => $(id).addEventListener('input', drawHeadcount));
+  }
+
   // ---------- 操作イベント ----------
   function setupControls() {
     document.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {
@@ -323,10 +488,12 @@
 
   async function main() {
     setupControls();
+    setupTabs();
     try {
-      const [players, qa, meta] = await Promise.all([loadJson(PLAYERS_URL), loadJson(QA_URL).catch(() => []), loadJson(META_URL).catch(() => null)]);
+      const [players, qa, meta, plan] = await Promise.all([loadJson(PLAYERS_URL), loadJson(QA_URL).catch(() => []), loadJson(META_URL).catch(() => null), loadJson(PLAN_URL).catch(() => null)]);
       if (!Array.isArray(players)) throw new Error('players.json の形式が違います（配列ではありません）');
       PLAYERS = players; QA = Array.isArray(qa) ? qa : []; META = meta && typeof meta === 'object' ? meta : null;
+      PLAN = plan && typeof plan === 'object' && Array.isArray(plan['一覧']) ? plan : null;
     } catch (err) {
       console.error(err);
       showError('データの読み込みに失敗しました: ' + err.message);
@@ -339,6 +506,7 @@
     drawAbLegend();
     drawRows();
     drawQA();
+    drawPlan();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', main); else main();
