@@ -8,11 +8,12 @@
 
   // ---------- 設定（ここを変えると表示が変わる） ----------
   const STAR = 90;                 // 「予測最大が◯以上」のしきい値
-  const PLAYERS_URL = 'data/players.json';
-  const QA_URL = 'data/qa.json';
-  // セーブ時点・前年比の基準の文言。{Y} はシーズン年（最新ドラフト年＋1）、{Y1} はその前年に置き換わる。
-  const NOTE_SAVE = '{Y}年2月・ウィンターリーグ後';
-  const NOTE_BASE = '{Y1}年開幕時';
+  const PLAYERS_URL = 'players.json';
+  const QA_URL = 'qa.json';
+  const META_URL = 'meta.json';   // build.py が出力する更新情報（ゲーム内日付など）
+  // meta.json が無いときの文言。{Y} は開幕年に置き換わる。
+  const NOTE_SAVE = '{Y}年シーズン';
+  const NOTE_BASE = '{Y}年開幕時';
 
   // ---------- 定数 ----------
   const POS_C = { '投': 'var(--p-p)', '捕': 'var(--p-c)', '内': 'var(--p-i)', '外': 'var(--p-o)' };
@@ -29,6 +30,7 @@
   const BP = { status: '', role: '', kubun: '', dy: '', tri: '', q: '', sort: '予測最大', dir: -1, open: new Set(), qopen: new Set() };
   let PLAYERS = null;   // 選手データ（配列）
   let QA = null;        // 質問データ（配列）
+  let META = null;      // 更新情報（meta.json、無くても動く）
 
   // ---------- 小さな道具 ----------
   const $ = (id) => document.getElementById(id);
@@ -37,20 +39,16 @@
   const num = (v) => Number(v);
   const setText = (id, v) => { const e = $(id); if (e) e.textContent = isNil(v) ? '—' : String(v); };
 
-  // ---------- テーマ切り替え ----------
-  function currentTheme() {
-    const t = document.documentElement.getAttribute('data-theme');
-    if (t === 'light' || t === 'dark') return t;
-    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  }
-  function setupTheme() {
-    const btn = $('themeBtn');
-    if (!btn) return;
-    btn.addEventListener('click', () => {
-      const next = currentTheme() === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', next);
-      try { localStorage.setItem('bp-theme', next); } catch (e) { /* 保存できなくても動く */ }
-    });
+  // ---------- 更新情報（meta.json） ----------
+  // build.py が書き出す { "ゲーム内日付": "2157年2月3日", "シーズン年": 2157, "更新日時": "…", "セーブファイル": "…" }
+  function drawAsof() {
+    const p = $('asof');
+    if (!p) return;
+    p.replaceChildren();
+    if (!META) return;
+    const add = (lab, val) => { if (isNil(val)) return; const s = el('span'); s.append(document.createTextNode(lab + ' '), el('b', null, String(val))); p.append(s); };
+    add('ゲーム内の日付', META['ゲーム内日付']);
+    add('サイト更新', META['更新日時']);
   }
 
   // ---------- 集計（元の dash.calc('summary') 相当） ----------
@@ -70,6 +68,18 @@
     const s = summary(PLAYERS);
     setText('s_new', s['新人数']); setText('t_new', s['新人数']);
     setText('s_topnew', s['注目新人']); setText('s_topnewv', s['注目新人予測']);
+    const lede = document.querySelector('.lede');
+    if (lede && !s['新人数']) {
+      // 新人がいない時期（ドラフト前など）は、注目選手を伸び盛りの最有力に切り替える
+      const grow = PLAYERS.filter(r => r['状態'] === '伸び盛り').sort((a, b) => num(b['予測最大']) - num(a['予測最大']))[0];
+      lede.replaceChildren();
+      lede.append(document.createTextNode('今回の新人はまだいません（ドラフト前）。'));
+      if (grow) {
+        lede.append(document.createTextNode('伸び盛りで最も期待できるのは'), el('b', null, String(grow['名前'])), document.createTextNode('（予測最大総合力'), el('b', null, String(grow['予測最大'])), document.createTextNode('）です。'));
+      }
+    }
+    const eyebrow = document.querySelector('.eyebrow');
+    if (eyebrow && META && META['球団名']) eyebrow.textContent = `${META['球団名']} ／ 育成レポート`;
     setText('t_grow', s['伸び盛り人数']);
     setText('t_star', s['主力候補人数']);
     setText('t_peak', s['ピーク以降人数']);
@@ -77,22 +87,25 @@
   }
 
   // シーズン年 ＝ データ内の最大ドラフト年＋1（例：2156年ドラフトの新人がいれば 2157年）
+  // 開幕年 ＝ 前年比の基準になる年（meta.json があればそれを使い、無ければドラフト年から推定）
   function seasonYear() {
+    if (META && Number.isFinite(Number(META['開幕年']))) return Number(META['開幕年']);
     const ys = PLAYERS.map(r => Number(r['ドラフト年'])).filter(y => Number.isFinite(y) && y > 0);
     return ys.length ? Math.max(...ys) + 1 : null;
   }
   function drawNote() {
     const y = seasonYear();
-    const save = y ? NOTE_SAVE.replace('{Y}', y).replace('{Y1}', y - 1) : 'セーブ時点';
-    const base = y ? NOTE_BASE.replace('{Y}', y).replace('{Y1}', y - 1) : '前年開幕時';
+    const save = META && META['ゲーム内日付'] ? `ゲーム内 ${META['ゲーム内日付']}${META['フェーズ'] ? '・' + META['フェーズ'] : ''}` : (y ? NOTE_SAVE.replace('{Y}', y) : 'セーブ時点');
+    const base = y ? NOTE_BASE.replace('{Y}', y) : '今季開幕時';
+    const tri = PLAYERS.filter(r => r['三軍推奨'] === '推奨').length;
     $('note').textContent =
       `能力・総合はセーブ時点（${save}）の値です。選手名をタップすると詳細が開きます。` +
       '名前の右は、ポジション（塗りつぶし＝本職、枠だけ＝守れる別ポジション）・ドラフト順位・総合・年齢です。' +
       `前年比（各能力も同じ）は${base}からの伸びです。誤差は予測最大のずれの目安です。将来性の丸の色は等級（A〜E）ごとに分けています。` +
-      '「三軍推奨」は、一軍以外・24歳以下・伸びしろ5以上の選手を、新人→伸びしろ10以上→その他の順に予測最大の高い選手から74人選んだものです。' +
-      '練習メニューは一番低い能力を伸ばすものです。「入団時ハズレ」は、入団時の実際の能力がスカウト評価を大きく下回った選手です。';
+      `「三軍推奨」は、一軍以外・24歳以下・伸びしろ5以上の選手を、新人→伸びしろ10以上→その他の順に予測最大の高い選手から${tri}人（全選手数−70）選んだものです。` +
+      '練習メニューは、その役割の総合への影響が大きく、まだ低い能力を伸ばすものです。「入団時ハズレ」は、入団時の実際の能力がスカウト評価を大きく下回った選手です。';
     const info = $('datainfo');
-    if (info) info.textContent = `選手 ${PLAYERS.length} 人${y ? `・${y}年シーズン時点のデータ` : ''}`;
+    if (info) info.textContent = `選手 ${PLAYERS.length} 人${y ? `・${y}年シーズン時点のデータ` : ''}${META && META['セーブファイル'] ? `・${META['セーブファイル']}` : ''}`;
   }
 
   // ---------- 絞り込み・並び替え ----------
@@ -130,7 +143,7 @@
     box.replaceChildren();
     setText('shown', rows ? rows.length : null);
     if (!rows) return;
-    if (!rows.length) { box.append(el('div', 'loading', '条件に合う選手がいません。')); return; }
+    if (!rows.length) { box.append(el('div', 'wait', '条件に合う選手がいません。')); return; }
     for (const r of rows) box.append(playerItem(r));
   }
 
@@ -156,10 +169,10 @@
     // 詳細
     const d = el('div', 'pld');
     const tags = el('div', 'tags');
-    tags.append(el('span', 'badge', String(r['状態'])));
+    tags.append(el('span', 'pill', String(r['状態'])));
     if (r['入団時ハズレ'] === 'ハズレ') tags.append(el('span', 'miss', '入団時ハズレ'));
     if (r['三軍推奨'] === '推奨') tags.append(el('span', 'trirec', '三軍推奨'));
-    const g = el('span', 'grade', String(r['将来性'])); g.style.setProperty('--k', GR_VAR[r['将来性']] || 'var(--c7)');
+    const g = el('span', 'grd', String(r['将来性'])); g.style.setProperty('--k', GR_VAR[r['将来性']] || 'var(--c7)');
     const gw = el('span', 'tag'); gw.append(el('span', null, '将来性'), g); tags.append(gw);
     tags.append(el('span', 'tag', '背番号 ' + String(r['背番号'])));
     tags.append(el('span', 'tag', `${r['役割']}・${r['所属']}・${r['区分']}`));
@@ -309,17 +322,17 @@
   }
 
   async function main() {
-    setupTheme();
     setupControls();
     try {
-      const [players, qa] = await Promise.all([loadJson(PLAYERS_URL), loadJson(QA_URL).catch(() => [])]);
+      const [players, qa, meta] = await Promise.all([loadJson(PLAYERS_URL), loadJson(QA_URL).catch(() => []), loadJson(META_URL).catch(() => null)]);
       if (!Array.isArray(players)) throw new Error('players.json の形式が違います（配列ではありません）');
-      PLAYERS = players; QA = Array.isArray(qa) ? qa : [];
+      PLAYERS = players; QA = Array.isArray(qa) ? qa : []; META = meta && typeof meta === 'object' ? meta : null;
     } catch (err) {
       console.error(err);
       showError('データの読み込みに失敗しました: ' + err.message);
       return;
     }
+    drawAsof();
     drawSummary();
     drawNote();
     drawDyear();

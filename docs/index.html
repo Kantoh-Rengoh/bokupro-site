@@ -2,31 +2,23 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0a0e">
 <title>ESY 選手成長予測</title>
 <meta name="description" content="ぼくのプロ野球 選手成長予測ダッシュボード">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
-<script>
-  // ページが描画される前にテーマを決める（ちらつき防止）
-  (function () {
-    try {
-      var t = localStorage.getItem('bp-theme');
-      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
-    } catch (e) {}
-  })();
-</script>
 </head>
 <body>
 <div class="bp" id="app">
   <header class="hero">
-    <button class="theme" id="themeBtn" type="button" aria-label="ライト／ダーク切り替え" title="ライト／ダーク切り替え"><span class="ico"></span></button>
     <span class="eyebrow">ESY Co., ltd ／ 育成レポート</span>
     <h1>ESY 選手成長予測</h1>
     <p class="lede">今回の新人は<b id="s_new">—</b>人。新人で最も期待できるのは<b id="s_topnew">—</b>（予測最大総合力<b id="s_topnewv">—</b>）です。</p>
+    <p class="asof" id="asof"></p>
     <button class="jump" type="button" data-jump="qa">質問ボックスを見る ›</button>
   </header>
 
@@ -91,7 +83,7 @@
       <button class="chip" type="button" data-group="dir" data-value="-1" aria-pressed="true">高い順</button>
       <button class="chip" type="button" data-group="dir" data-value="1" aria-pressed="false">低い順</button>
     </div>
-    <div class="plist" id="rows"><div class="loading">データを読み込んでいます…</div></div>
+    <div class="plist" id="rows"><div class="wait">データを読み込んでいます…</div></div>
     <div class="legend"><span style="--k:var(--s-new)"><i></i>新人</span><span style="--k:var(--s-grow)"><i></i>伸び盛り：最高到達までまだ余裕あり</span><span style="--k:var(--s-mid)"><i></i>成熟期：最高到達が目前</span><span style="--k:var(--s-peak)"><i></i>ピーク：最高到達の前後</span><span style="--k:var(--s-down)"><i></i>下降期：最高を過ぎた</span></div>
     <div class="legend" id="ablegend"></div>
     <p class="note" id="note"></p>
