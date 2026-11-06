@@ -18,8 +18,9 @@
 
 1. iPhone の Safari で https://github.com/Kantoh-Rengoh/bokupro-site/tree/main/saves を開く
    - ログイン画面が出たら GitHub にログインする
-2. 右上の「**Add file**」→「**Upload files**」を押す
-   - ボタンが見当たらないときは、アドレスバー左の「ぁあ」→「**デスクトップ用Webサイトを表示**」に切り替える
+2. 右上の「**…**」（点が3つのボタン）→「**Upload files**」を押す
+   - パソコンの画面では「**Add file**」→「**Upload files**」です
+   - どちらも見当たらないときは、アドレスバー左の「ぁあ」→「**デスクトップ用Webサイトを表示**」に切り替える
 3. 「**choose your files**」を押し、「ファイル」アプリから保存した `.tfosave` を選ぶ
 4. ファイル名が画面に出たら、下の緑の「**Commit changes**」を押す
 
