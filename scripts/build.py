@@ -113,6 +113,15 @@ def pick_newest_save():
     """saves/ 内の .tfosave をゲーム内日付で比べ、一番新しいものを返す。古いものは archive へ。"""
     SAVES.mkdir(exist_ok=True)
     ARCHIVE.mkdir(exist_ok=True)
+    # リポジトリ直下に置かれた .tfosave（saves フォルダの外でアップロードした場合）は saves/ に移す
+    for stray in sorted(ROOT.glob("*.tfosave")):
+        target = SAVES / stray.name
+        n = 2
+        while target.exists():
+            target = SAVES / f"{stray.stem}_{n}{stray.suffix}"
+            n += 1
+        shutil.move(str(stray), str(target))
+        log(f"  直下にあったセーブデータを移動: {stray.name} → saves/{target.name}")
     files = sorted([p for p in SAVES.glob("*.tfosave") if p.is_file()])
     if not files:
         files = sorted(ARCHIVE.glob("*.tfosave"))

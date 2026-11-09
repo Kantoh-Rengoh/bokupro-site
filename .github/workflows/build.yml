@@ -6,6 +6,7 @@ on:
   push:
     paths:
       - "saves/**"
+      - "*.tfosave"          # saves の外（直下）にアップロードしてしまった場合も動かす
       - "scripts/**"
       - "requirements.txt"
       - ".github/workflows/build.yml"
@@ -42,6 +43,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A docs saves
+          git add -u    # 直下から saves/ へ移したセーブデータの削除も含める
           if git diff --cached --quiet; then
             echo "変更なし（前回と同じ結果）"
           else
