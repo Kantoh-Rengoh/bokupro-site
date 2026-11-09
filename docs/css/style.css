@@ -334,3 +334,34 @@ h1 {
   .ptab td.rs:empty, .ptab td.rs small:empty { display: none; }
   .ptab.dtab tbody tr { grid-template-columns: repeat(4, 1fr); }
 }
+
+/* ---------- 注目度・二刀流 ---------- */
+.tw { display: inline-flex; align-items: center; font-size: var(--fs-caption); font-weight: 800; padding: .12rem .55rem; border-radius: 999px; color: #0a0a0e; background: linear-gradient(90deg, #ff6fae, #4ade80); box-shadow: 0 0 10px -3px #ff6fae; }
+.plh .tw { font-size: .62rem; padding: .05rem .4rem; }
+.side { border: 1px solid rgba(255, 255, 255, .08); border-left: 3px solid var(--pc); border-radius: var(--radius); padding: .5rem .6rem; display: flex; flex-direction: column; gap: .45rem; background: rgba(255, 255, 255, .02); }
+.side .sh { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font-weight: 700; color: var(--pc); }
+.side .sh .ref { font-size: .66rem; font-weight: 700; color: var(--color-fg-muted); border: 1px dashed rgba(255, 255, 255, .25); border-radius: 4px; padding: 0 .3rem; }
+.sides { display: flex; flex-direction: column; gap: .5rem; }
+
+/* ---------- ドラフト候補 ---------- */
+.dft.card { border-top-color: rgba(255, 111, 174, .7); }
+.h2sub { font-family: var(--font-sans); font-size: var(--fs-caption); color: var(--color-fg-muted); letter-spacing: 0; margin-left: .4rem; }
+.h3 { font-family: var(--font-serif); font-weight: 400; font-size: var(--fs-body); letter-spacing: .05em; color: var(--gold2); margin: .4rem 0 0; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.h3 .cnt { font-family: var(--font-sans); font-size: var(--fs-caption); color: var(--color-fg-muted); }
+.needs { display: flex; flex-direction: column; gap: .3rem; font-size: var(--fs-caption); background: rgba(95, 180, 255, .07); border: 1px solid rgba(95, 180, 255, .3); border-radius: var(--radius); padding: .5rem .65rem; }
+.needs:empty { display: none; }
+.needs .nh { font-weight: 700; color: var(--c6); }
+.needs .ni { display: flex; gap: .4rem; align-items: baseline; flex-wrap: wrap; color: var(--color-fg); }
+.needs .ni b { color: var(--c6); white-space: nowrap; }
+.needs .nc { color: var(--color-fg-muted); }
+.frame { display: flex; flex-direction: column; gap: .3rem; margin-top: .5rem; }
+.frame .fh { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.frame .fh .ft { font-family: var(--font-serif); font-size: var(--fs-body); color: var(--k); letter-spacing: .05em; }
+.frame .fh .fd { font-size: var(--fs-caption); color: var(--color-fg-muted); }
+.frame .none { font-size: var(--fs-caption); color: var(--color-fg-muted); padding: .4rem .6rem; border: 1px dashed rgba(255, 255, 255, .12); border-radius: var(--radius); }
+.dftall { display: flex; flex-direction: column; gap: var(--gap-xs); margin-top: .6rem; }
+.plh .sr { font-size: var(--fs-caption); color: var(--color-fg-muted); white-space: nowrap; }
+.plh .lot { font-size: .66rem; font-weight: 800; padding: .05rem .4rem; border-radius: 999px; color: var(--k); border: 1px solid color-mix(in srgb, var(--k) 50%, transparent); white-space: nowrap; }
+.pl.dim { opacity: .55; }
+.fit { display: inline-flex; align-items: center; gap: .3rem; font-size: var(--fs-caption); font-weight: 700; padding: .12rem .55rem; border-radius: 999px; color: var(--c6); border: 1px solid color-mix(in srgb, var(--c6) 50%, transparent); background: color-mix(in srgb, var(--c6) 10%, transparent); }
+.memo { font-size: var(--fs-caption); color: var(--color-fg-muted); line-height: 1.5; }

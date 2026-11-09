@@ -20,15 +20,17 @@
     <p class="lede">今回の新人は<b id="s_new">—</b>人。新人で最も期待できるのは<b id="s_topnew">—</b>（予測最大総合力<b id="s_topnewv">—</b>）です。</p>
     <p class="asof" id="asof"></p>
     <div class="jumps">
-      <button class="jump" type="button" data-tab="plan">オフの編成提案を見る ›</button>
-      <button class="jump" type="button" data-tab="qa">質問ボックスを見る ›</button>
+      <button class="jump" type="button" data-tab="plan">オフの編成提案 ›</button>
+      <button class="jump" type="button" data-tab="draft">ドラフト候補 ›</button>
+      <button class="jump" type="button" data-tab="qa">質問ボックス ›</button>
     </div>
   </header>
 
   <nav class="tabs" id="tabs" aria-label="表示の切り替え">
     <button class="tab" type="button" data-tab="growth" aria-selected="true">成長予測</button>
-    <button class="tab" type="button" data-tab="plan" aria-selected="false">オフの編成提案</button>
-    <button class="tab" type="button" data-tab="qa" aria-selected="false">質問ボックス</button>
+    <button class="tab" type="button" data-tab="plan" aria-selected="false">編成提案</button>
+    <button class="tab" type="button" data-tab="draft" aria-selected="false">ドラフト候補</button>
+    <button class="tab" type="button" data-tab="qa" aria-selected="false">質問</button>
   </nav>
 
   <div class="panel" id="tab-growth">
@@ -115,6 +117,56 @@
     <div id="plan_lists"></div>
     <div id="dft"></div>
     <p class="note" id="plan_note"></p>
+  </section>
+  </div>
+
+  <div class="panel" id="tab-draft" hidden>
+  <section class="card dft" id="draftcard">
+    <h2>ドラフト候補 <span class="h2sub" id="dft_year"></span></h2>
+    <div class="count" id="dft_asof">読み込んでいます…</div>
+    <div class="needs" id="dft_needs"></div>
+    <div id="dft_frames"></div>
+    <div class="dftall" id="dft_allwrap" hidden>
+      <h3 class="h3">候補の一覧 <span class="cnt" id="dft_n"></span></h3>
+      <div class="ctl">
+        <span class="lbl">ポジション</span>
+        <button class="chip" type="button" data-dgroup="role" data-value="" aria-pressed="true">全ポジション</button>
+        <button class="chip" type="button" data-dgroup="role" data-value="投手" aria-pressed="false">投手</button>
+        <button class="chip" type="button" data-dgroup="role" data-value="捕手" aria-pressed="false">捕手</button>
+        <button class="chip" type="button" data-dgroup="role" data-value="内野手" aria-pressed="false">内野手</button>
+        <button class="chip" type="button" data-dgroup="role" data-value="外野手" aria-pressed="false">外野手</button>
+      </div>
+      <div class="ctl">
+        <span class="lbl">将来性</span>
+        <button class="chip" type="button" data-dgroup="grade" data-value="" aria-pressed="true">すべて</button>
+        <button class="chip" type="button" data-dgroup="grade" data-value="A" aria-pressed="false">A</button>
+        <button class="chip" type="button" data-dgroup="grade" data-value="B" aria-pressed="false">B</button>
+        <button class="chip" type="button" data-dgroup="grade" data-value="C" aria-pressed="false">C</button>
+        <button class="chip" type="button" data-dgroup="grade" data-value="D" aria-pressed="false">D以下</button>
+      </div>
+      <div class="ctl">
+        <span class="lbl">注目度</span>
+        <button class="chip" type="button" data-dgroup="attn" data-value="" aria-pressed="true">すべて</button>
+        <button class="chip" type="button" data-dgroup="attn" data-value="A" aria-pressed="false">A</button>
+        <button class="chip" type="button" data-dgroup="attn" data-value="B" aria-pressed="false">B</button>
+        <button class="chip" type="button" data-dgroup="attn" data-value="C" aria-pressed="false">C</button>
+        <button class="chip" type="button" data-dgroup="attn" data-value="D" aria-pressed="false">D以下</button>
+      </div>
+      <div class="ctl">
+        <span class="lbl">並び順</span>
+        <select class="sel" id="dft_sort" aria-label="候補の並び順">
+          <option value="予測最大">予測最大</option>
+          <option value="スカウト順位">スカウト順位</option>
+          <option value="関心数">興味球団数</option>
+          <option value="総合">総合</option>
+        </select>
+        <button class="chip" type="button" data-dgroup="dir" data-value="-1" aria-pressed="true">高い順</button>
+        <button class="chip" type="button" data-dgroup="dir" data-value="1" aria-pressed="false">低い順</button>
+      </div>
+      <input class="search" id="dft_search" type="search" placeholder="名前で検索" aria-label="候補を名前で検索" autocomplete="off">
+      <div class="plist" id="dft_rows"></div>
+    </div>
+    <p class="note" id="dft_note"></p>
   </section>
   </div>
 

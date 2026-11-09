@@ -15,7 +15,8 @@ docs/players.json と docs/meta.json（と docs/data/roster_plan.json）を作�
   3. 引退選手の経歴から「生涯最高の総合」と「到達年齢」を予測するモデルを学習する
   4. 自チーム全員の予測・状態・前年比・三軍推奨・練習メニューを計算する
   5. docs/players.json / docs/meta.json を書き出す
-  6. オフの編成提案（roster_plan.py）を docs/data/roster_plan.json に書き出す
+  6. オフの編成提案（roster_plan.py）を docs/data/roster_plan.json に、ドラフト候補を docs/draft.json に書き出す
+  ※ 二刀流の選手（twoWay 欄あり）は投手側・野手側を別々に計算し、予測最大が高い方を見出しに使う
 """
 import sys, re, json, math, shutil, datetime, warnings
 from pathlib import Path
@@ -405,9 +406,108 @@ def status_of(is_rookie, age, reach_age, peak_age):
     return "伸び盛り"
 
 
-def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
+def predict_side(ab, role, age, hs, ages, sf, miss, ov_models, pred, pred_rookie, gba):
+    """1つの役割分の計算（二刀流は投手側・野手側で2回呼ぶ）。
+    ab: 能力6項目の dict、hs: その役割の abilityHistory（年順）、ages: hs 各年の年齢。
+    戻り値: dict(current, pmax, reach, reach_status, is_rookie, hist_max, 誤差, 伸びしろ, 前年比, 状態, 能力5項目(+前年比), 推奨メニュー)"""
     imp, m_max, m_age, _, m_fut = pred
     imp_r, m_max_r, m_age_r, _, _ = pred_rookie
+    vec = [float(ab[a]) for a in AB6]
+    current = ov_models[role].predict(vec)
+    is_rookie = len(hs) == 0
+    peak_age = sf_peak(sf)
+    if is_rookie:
+        o_in = current + (ROOKIE_OFFSET_MISS if miss else ROOKIE_OFFSET_OK)
+        x = imp_r([[age, o_in] + sf])
+        pmax = max(int(round(float(m_max_r.predict(x)[0]))), current)
+        page = float(m_age_r.predict(x)[0])
+        reach = max(int(round(page)), age) if pmax > current else age
+        reach_status = reach
+        hist_max = current
+    else:
+        a_last = ages[-1] if ages[-1] is not None else age
+        o_last = float(hs[-1]["overall100"])
+        x = imp([[a_last, o_last, float(hs[0]["overall100"])] + sf])
+        pmax = float(m_max.predict(x)[0])
+        page = float(m_age.predict(x)[0])
+        excess = (current - o_last) - gba.get(a_last, 0.0)
+        pmax += 0.5 * excess
+        hist_vals = [float(h["overall100"]) for h in hs]
+        hist_max = max(hist_vals + [current])
+        if peak_age is not None and age > int(peak_age):
+            # 設定ピーク年齢を過ぎた選手：予測最大は「今後の最高」モデル（過去の最高値を含めない）。
+            # 状態の判定だけは、実際に最高だった年齢（過去）を使う
+            reach_status = ages[hist_vals.index(max(hist_vals))] if max(hist_vals) >= current else age
+            pmax = max(int(round(float(m_fut.predict(x)[0]) + 0.5 * excess)), current)
+            reach = max(int(round(page)), age) if pmax > current else age
+        else:
+            pmax = max(int(round(pmax)), current)
+            reach = max(int(round(page)), age) if pmax > current else age
+            reach_status = reach
+    out = {
+        "current": current, "pmax": int(pmax), "reach": reach, "reach_status": reach_status, "is_rookie": is_rookie,
+        "hist_max": hist_max, "誤差": error_margin(is_rookie, current, age), "伸びしろ": max(0, int(pmax) - current),
+        "前年比": None if is_rookie else int(current - int(hs[-1]["overall100"])),
+        "状態": status_of(is_rookie, age, reach_status, peak_age),
+    }
+    ab_map = AB_PITCHER if role == "投手" else AB_BATTER
+    for key, (lab, a) in zip(AB_KEYS, ab_map):
+        val = int(ab[a])
+        out[key] = val
+        out[key + "_前年比"] = None if is_rookie or hs[-1].get(a) is None else int(val - int(hs[-1][a]))
+    # 練習メニュー：役割の総合への重み × (100 − 能力値) が最大の能力
+    w = ov_models[role].w
+    menu_map = MENU_PITCHER if role == "投手" else MENU_BATTER
+    best, best_lab, best_val, best_score = None, None, None, -1
+    for lab, a in ab_map:
+        score = float(w[AB6.index(a)]) * (100 - int(ab[a]))
+        if score > best_score:
+            best, best_lab, best_val, best_score = menu_map[a], lab, int(ab[a]), score
+    out["推奨メニュー"] = f"{best}（{best_lab} {best_val}）" if best else ""
+    return out
+
+
+def sf_peak(sf):
+    """static_features の並びから設定ピーク年齢を取り出す（NaN なら None）"""
+    v = sf[2]
+    return None if v is None or (isinstance(v, float) and math.isnan(v)) else int(v)
+
+
+def two_way_side(p):
+    """二刀流の野手側の情報 (役割, 能力6項目, 疑似選手データ)。二刀流でなければ None。
+    twoWay: fielderRole（野手としての位置）、contact/power/speed/fielding、battingGrowth、abilityHistory など"""
+    tw = p.get("twoWay")
+    if not isinstance(tw, dict):
+        return None
+    role = tw.get("fielderRole")
+    if role not in ROLE_CAT or role == "投手":
+        return None
+    ab = {}
+    for a in ("contact", "power", "speed", "fielding"):
+        if tw.get(a) is None:
+            return None
+        ab[a] = float(tw[a])
+    ab["arm"] = float(p.get("arm") or 0)          # 精神は投手・野手で共通
+    ab["stamina"] = float(p.get("stamina") or 0)  # 野手の総合にはほぼ効かない
+    pseudo = {"growth": tw.get("battingGrowth") or p.get("growth") or {}, "developmentPotential": p.get("developmentPotential"),
+              "growthVolatility": p.get("growthVolatility"), "role": role, "draftRecord": p.get("draftRecord") or {},
+              "abilityHistory": tw.get("abilityHistory") or [], "seasonHistory": p.get("seasonHistory") or [], "age": p.get("age")}
+    return role, ab, pseudo
+
+
+def side_public(side, role, g):
+    """二刀流の詳細表示用に、1つの役割分の値をまとめる"""
+    d = {"役割": role, "ポジ": ROLE_CAT.get(role, ""), "総合": side["current"], "予測最大": side["pmax"], "到達年齢": side["reach"],
+         "伸びしろ": side["伸びしろ"], "誤差": side["誤差"], "前年比": side["前年比"], "状態": side["状態"],
+         "タイプ": ARCHETYPE.get(g.get("archetype"), str(g.get("archetype") or "不明")), "設定ピーク年齢": g.get("peakAge"),
+         "推奨メニュー": side["推奨メニュー"], "参考値": True}
+    for key in AB_KEYS:
+        d[key] = side[key]
+        d[key + "_前年比"] = side[key + "_前年比"]
+    return d
+
+
+def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
     rows = []
     for p in own:
         role = p.get("role")
@@ -421,52 +521,31 @@ def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
         age = int(p.get("age") or 0)
         g = p.get("growth") or {}
         dr = p.get("draftRecord") or {}
-        peak_age = g.get("peakAge")
-        current = ov_models[role].predict(vec)
-        hs = hist_sorted(p)
-        is_rookie = len(hs) == 0
-        sf = static_features(p)
         miss = bool(dr.get("arrivalWasMiss"))
+        hs = hist_sorted(p)
+        ages = [a if a is not None else age for a in (player_ages(p, hs) if hs else [])]
+        main_side = predict_side({a: float(p[a]) for a in AB6}, role, age, hs, ages, static_features(p), miss, ov_models, pred, pred_rookie, gba)
 
-        if is_rookie:
-            o_in = current + (ROOKIE_OFFSET_MISS if miss else ROOKIE_OFFSET_OK)
-            x = imp_r([[age, o_in] + sf])
-            pmax = float(m_max_r.predict(x)[0])
-            page = float(m_age_r.predict(x)[0])
-            pmax = max(int(round(pmax)), current)
-            reach = max(int(round(page)), age) if pmax > current else age
-            hist_max = current
-            fut = pmax
-        else:
-            ages = player_ages(p, hs)
-            last = hs[-1]
-            a_last = ages[-1] if ages[-1] is not None else age
-            o_last = float(last["overall100"])
-            x = imp([[a_last, o_last, float(hs[0]["overall100"])] + sf])
-            pmax = float(m_max.predict(x)[0])
-            page = float(m_age.predict(x)[0])
-            gain = current - o_last
-            excess = gain - gba.get(a_last, 0.0)
-            pmax += 0.5 * excess
-            hist_vals = [float(h["overall100"]) for h in hs]
-            hist_max = max(hist_vals + [current])
-            if peak_age is not None and age > int(peak_age):
-                # 設定ピーク年齢を過ぎた選手：予測最大は「今後の最高」モデル（過去の最高値を含めない）。
-                # 状態の判定だけは、実際に最高だった年齢（過去）を使う
-                reach_status = ages[hist_vals.index(max(hist_vals))] if max(hist_vals) >= current else age
-                pmax = max(int(round(float(m_fut.predict(x)[0]) + 0.5 * excess)), current)
-                reach = max(int(round(page)), age) if pmax > current else age
-            else:
-                pmax = max(int(round(pmax)), current)
-                reach = max(int(round(page)), age) if pmax > current else age
-                reach_status = reach
-            fut = pmax
-            pmax = int(round(pmax))
-            if reach is None:
-                reach = age
-        upside = max(0, pmax - current)
-        st = status_of(is_rookie, age, reach_status if not is_rookie else reach, peak_age)
+        # 二刀流：野手側も計算し、見出しの数字は予測最大が高い方を使う
+        tw = two_way_side(p)
+        tw_side, tw_role, tw_g = None, None, None
+        if tw:
+            tw_role, tw_ab, pseudo = tw
+            hs2 = hist_sorted(pseudo)
+            ages2 = [a if a is not None else age for a in (player_ages(pseudo, hs2) if hs2 else [])]
+            tw_g = pseudo["growth"]
+            tw_side = predict_side(tw_ab, tw_role, age, hs2, ages2, static_features(pseudo), miss, ov_models, pred, pred_rookie, gba)
+        best, best_g = main_side, g
+        if tw_side and (tw_side["pmax"], tw_side["current"]) > (main_side["pmax"], main_side["current"]):
+            best, best_g = tw_side, tw_g
+
+        is_rookie = main_side["is_rookie"]
         main, subs, posstr = positions(p, role)
+        if tw_role:
+            c = ROLE_CAT[tw_role]
+            sub_list = [x for x in subs.split("・") if x]
+            if c != main and c not in sub_list:
+                subs = "・".join(sub_list + [c])
         ext = is_external(p, team_name)
         dev = bool(p.get("developmentContract"))
         kubun = "移籍・外国人" if ext else ("育成" if dev else "支配下")
@@ -476,7 +555,6 @@ def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
             dyear = str(dr.get("year")) if dr.get("year") is not None else "不明"
             rnd = dr.get("round")
             drank = ("育成" if dr.get("isDevelopment") else "") + (f"{rnd}位" if rnd is not None else "不明")
-        ab_map = AB_PITCHER if role == "投手" else AB_BATTER
         row = {
             "id": p.get("id"),
             "背番号": p.get("uniformNumber"),
@@ -485,41 +563,38 @@ def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
             "所属": p.get("level") or "",
             "年齢": age,
             "将来性": dr.get("potentialGrade") or "-",
+            "注目度": dr.get("attentionGrade") or "-",
             "区分": kubun,
             "新人": "新人" if is_rookie else "",
             "ドラフト年": dyear,
             "ドラフト順位": drank,
-            "タイプ": ARCHETYPE.get(g.get("archetype"), str(g.get("archetype") or "不明")),
-            "設定ピーク年齢": peak_age,
-            "現在": current,
-            "予測最大": pmax,
-            "到達年齢": reach,
-            "誤差": error_margin(is_rookie, current, age),
-            "前年比": None if is_rookie else int(current - int(hs[-1]["overall100"])),
+            "タイプ": ARCHETYPE.get(best_g.get("archetype"), str(best_g.get("archetype") or "不明")),
+            "設定ピーク年齢": best_g.get("peakAge"),
+            "現在": best["current"],
+            "予測最大": best["pmax"],
+            "到達年齢": best["reach"],
+            "誤差": best["誤差"],
+            "前年比": best["前年比"],
             "ポジ": main,
             "サブポジ": subs,
             "守備位置": posstr,
             "入団時ハズレ": "ハズレ" if miss else "",
-            "伸びしろ": upside,
+            "伸びしろ": best["伸びしろ"],
+            "二刀流": bool(tw_side),
         }
-        for key, (lab, ab) in zip(AB_KEYS, ab_map):
-            val = int(p.get(ab))
-            row[key] = val
-            row[key + "_前年比"] = None if is_rookie or hs[-1].get(ab) is None else int(val - int(hs[-1][ab]))
-        row["状態"] = st
+        for key in AB_KEYS:
+            row[key] = main_side[key]
+            row[key + "_前年比"] = main_side[key + "_前年比"]
+        row["状態"] = best["状態"]
         row["三軍推奨"] = ""
-        # 練習メニュー：役割の総合への重み × (100 − 能力値) が最大の能力
-        w = ov_models[role].w
-        menu_map = MENU_PITCHER if role == "投手" else MENU_BATTER
-        best, best_lab, best_val, best_score = None, None, None, -1
-        for lab, ab in ab_map:
-            score = float(w[AB6.index(ab)]) * (100 - int(p.get(ab)))
-            if score > best_score:
-                best, best_lab, best_val, best_score = menu_map[ab], lab, int(p.get(ab)), score
-        row["推奨メニュー"] = f"{best}（{best_lab} {best_val}）" if best else ""
-        row["_hist_max"] = hist_max
-        row["_fut"] = fut      # 今後の最高総合の予測（編成提案用、書き出し前に消す）
-        row["_p"] = p          # 元の選手データ（同上）
+        row["推奨メニュー"] = main_side["推奨メニュー"]
+        if tw_side:
+            pitcher_first = role == "投手"
+            row["投手"] = side_public(main_side, role, g) if pitcher_first else side_public(tw_side, tw_role, tw_g)
+            row["野手"] = side_public(tw_side, tw_role, tw_g) if pitcher_first else side_public(main_side, role, g)
+        row["_hist_max"] = best["hist_max"]
+        row["_fut"] = best["pmax"]   # 今後の最高総合の予測（編成提案用、書き出し前に消す）
+        row["_p"] = p                # 元の選手データ（同上）
         rows.append(row)
     return rows
 
@@ -572,7 +647,8 @@ def main():
 
     log("6/6 オフの編成提案を作っています…")
     import roster_plan
-    roster_plan.build_plan(roster_plan_build_module(), p0, own, rows, retired, ov_models, game_dt, DOCS / "data" / "roster_plan.json")
+    roster_plan.build_plan(roster_plan_build_module(), p0, own, rows, retired, ov_models, game_dt,
+                           DOCS / "data" / "roster_plan.json", DOCS / "draft.json")
     for r in rows:
         for k in ("_hist_max", "_fut", "_p"):
             r.pop(k, None)
@@ -612,7 +688,10 @@ def main():
     log("  ゲーム画面と見比べる用（総合の計算値）:")
     for r in rows[:5]:
         log(f"    {r['名前']}（{r['役割']}・{r['所属']}）総合 {r['現在']}")
-    log(f"  書き出し: {DOCS / 'players.json'}, {DOCS / 'meta.json'}, {DOCS / 'data' / 'roster_plan.json'}")
+    tw_n = sum(1 for r in rows if r.get("二刀流"))
+    if tw_n:
+        log(f"  二刀流の選手: {tw_n} 人（予測は参考値）")
+    log(f"  書き出し: {DOCS / 'players.json'}, {DOCS / 'meta.json'}, {DOCS / 'data' / 'roster_plan.json'}, {DOCS / 'draft.json'}")
 
 
 def roster_plan_build_module():
