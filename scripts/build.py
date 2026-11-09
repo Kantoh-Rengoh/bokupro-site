@@ -57,6 +57,9 @@ ARCHETYPE = {"standard": "標準", "lateBloomer": "晩成", "earlyBloomer": "早
 GRADE_NUM = {"A": 5, "B": 4, "C": 3, "D": 2, "E": 1}
 ROOKIE_OFFSET_OK = 3.7     # 新人（キャンプ前）の総合に足す補正：ハズレなし
 ROOKIE_OFFSET_MISS = -0.6  # 同、ハズレあり
+# 二刀流の選手にゲームが表示する総合は「高い側×0.75＋低い側×0.25」（切り捨て）にほぼ一致する
+# （2162年のセーブデータで二刀流5人・14地点を確認、13地点が±1以内）
+TWO_WAY_BLEND = (0.75, 0.25)
 
 
 def die(msg):
@@ -504,6 +507,25 @@ def two_way_side(p):
     return role, ab, pseudo
 
 
+def side_hist(hs, role, ov_models):
+    """二刀流の選手の abilityHistory は、ゲーム記録の総合（overall100）が投手・野手の合成値になっている。
+    片側の計算に使えるよう、各年の能力値からその役割のモデルで総合を出し直したコピーを返す"""
+    out = []
+    for h in hs:
+        v = ability_vec(h)
+        h2 = dict(h)
+        if v is not None:
+            h2["overall100"] = ov_models[role].predict(v)
+        out.append(h2)
+    return out
+
+
+def two_way_blend(a, b):
+    """二刀流の表示用の総合（高い方×0.75＋低い方×0.25、切り捨て）"""
+    hi, lo = max(a, b), min(a, b)
+    return int(math.floor(TWO_WAY_BLEND[0] * hi + TWO_WAY_BLEND[1] * lo + 1e-9))
+
+
 def side_public(side, role, g):
     """二刀流の詳細表示用に、1つの役割分の値をまとめる"""
     d = {"役割": role, "ポジ": ROLE_CAT.get(role, ""), "総合": side["current"], "予測最大": side["pmax"], "到達年齢": side["reach"],
@@ -533,17 +555,23 @@ def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
         miss = bool(dr.get("arrivalWasMiss"))
         hs = hist_sorted(p)
         ages = [a if a is not None else age for a in (player_ages(p, hs) if hs else [])]
+        tw = two_way_side(p)
+        if tw:
+            # 二刀流：記録の総合は合成値なので、投手側の能力値から投手の総合を出し直す
+            hs = side_hist(hs, role, ov_models)
         main_side = predict_side({a: float(p[a]) for a in AB6}, role, age, hs, ages, static_features(p), miss, ov_models, pred, pred_rookie, gba)
 
-        # 二刀流：野手側も計算し、見出しの数字は予測最大が高い方を使う
-        tw = two_way_side(p)
-        tw_side, tw_role, tw_g = None, None, None
+        # 二刀流：野手側も計算する。予測最大・伸びしろ・状態は高い方、総合はゲーム表示に合わせた合成値
+        tw_side, tw_role, tw_g, blend_now, blend_prev = None, None, None, None, None
         if tw:
             tw_role, tw_ab, pseudo = tw
-            hs2 = hist_sorted(pseudo)
+            hs2 = side_hist(hist_sorted(pseudo), tw_role, ov_models)
             ages2 = [a if a is not None else age for a in (player_ages(pseudo, hs2) if hs2 else [])]
             tw_g = pseudo["growth"]
             tw_side = predict_side(tw_ab, tw_role, age, hs2, ages2, static_features(pseudo), miss, ov_models, pred, pred_rookie, gba)
+            blend_now = two_way_blend(main_side["current"], tw_side["current"])
+            if hs and hs2 and hs[-1].get("year") == hs2[-1].get("year"):
+                blend_prev = two_way_blend(int(hs[-1]["overall100"]), int(hs2[-1]["overall100"]))
         best, best_g = main_side, g
         if tw_side and (tw_side["pmax"], tw_side["current"]) > (main_side["pmax"], main_side["current"]):
             best, best_g = tw_side, tw_g
@@ -579,16 +607,16 @@ def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
             "ドラフト順位": drank,
             "タイプ": ARCHETYPE.get(best_g.get("archetype"), str(best_g.get("archetype") or "不明")),
             "設定ピーク年齢": best_g.get("peakAge"),
-            "現在": best["current"],
-            "予測最大": best["pmax"],
+            "現在": blend_now if blend_now is not None else best["current"],
+            "予測最大": max(best["pmax"], blend_now) if blend_now is not None else best["pmax"],
             "到達年齢": best["reach"],
             "誤差": best["誤差"],
-            "前年比": best["前年比"],
+            "前年比": (None if blend_prev is None else blend_now - blend_prev) if blend_now is not None else best["前年比"],
             "ポジ": main,
             "サブポジ": subs,
             "守備位置": posstr,
             "入団時ハズレ": "ハズレ" if miss else "",
-            "伸びしろ": best["伸びしろ"],
+            "伸びしろ": max(0, max(best["pmax"], blend_now) - blend_now) if blend_now is not None else best["伸びしろ"],
             "二刀流": bool(tw_side),
         }
         for key in AB_KEYS:
