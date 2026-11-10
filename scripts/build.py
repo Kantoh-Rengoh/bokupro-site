@@ -42,6 +42,13 @@ ARCHIVE = SAVES / "archive"
 DOCS = ROOT / "docs"
 ARCHIVE_KEEP = 2          # archive に残す古いセーブデータの数
 THIRD_SQUAD_RESERVE = 70  # 三軍推奨の人数 = 全選手数 − この値
+# 三軍推奨の基準（一軍以外の選手が対象）
+#   1) 年齢ごとの総合の基準を満たす選手（年齢: その年齢で必要な総合）
+THIRD_SQUAD_AGE_MIN = {25: 80, 24: 75, 23: 70, 22: 65, 21: 60, 20: 55}
+#   2) 1) を満たさないが、総合がこの値以上に届く見込み（予測最大がこの値以上）の選手
+THIRD_SQUAD_POTENTIAL = 80
+#   3) それでも三軍に空きがあれば、この年齢以下の選手を総合の高い順に入れる
+THIRD_SQUAD_FILL_AGE = 20
 
 AB6 = ["contact", "power", "speed", "fielding", "arm", "stamina"]
 # 画面に出す5項目（表示名, 元の項目）
@@ -637,16 +644,40 @@ def compute_players(own, team_name, ov_models, pred, pred_rookie, gba):
 
 
 def assign_third_squad(rows):
+    """三軍推奨を付ける。戻り値: (三軍の上限, 推奨した人数, 理由ごとの人数)
+    枠が足りないときは 1) 年齢基準 → 2) 80到達の見込み → 3) 空き枠 の順に、予測最大の高い選手から入れる"""
     limit = max(0, len(rows) - THIRD_SQUAD_RESERVE)
-    cands = [r for r in rows if r["所属"] != "一軍" and r["年齢"] <= 24 and r["伸びしろ"] >= 5]
-
-    def prio(r):
-        return 0 if r["新人"] else (1 if r["伸びしろ"] >= 10 else 2)
-
-    cands.sort(key=lambda r: (prio(r), -r["予測最大"], -r["伸びしろ"]))
-    for r in cands[:limit]:
+    pool = [r for r in rows if r["所属"] != "一軍"]
+    g1, g2 = [], []
+    for r in pool:
+        need = THIRD_SQUAD_AGE_MIN.get(r["年齢"])
+        if need is not None and r["現在"] >= need:
+            r["_tri"] = f"年齢基準（{r['年齢']}歳で総合{need}以上）"
+            g1.append(r)
+        elif r["現在"] < THIRD_SQUAD_POTENTIAL and r["予測最大"] >= THIRD_SQUAD_POTENTIAL:
+            r["_tri"] = f"総合{THIRD_SQUAD_POTENTIAL}到達の見込み（予測最大{r['予測最大']}）"
+            g2.append(r)
+    g1.sort(key=lambda r: (-r["予測最大"], -r["現在"]))
+    g2.sort(key=lambda r: (-r["予測最大"], -r["現在"]))
+    chosen = (g1 + g2)[:limit]
+    picked = {id(r) for r in chosen}
+    if len(chosen) < limit:
+        fill = [r for r in pool if id(r) not in picked and r["年齢"] <= THIRD_SQUAD_FILL_AGE]
+        fill.sort(key=lambda r: (-r["現在"], -r["予測最大"]))
+        for r in fill[: limit - len(chosen)]:
+            r["_tri"] = f"空き枠（{THIRD_SQUAD_FILL_AGE}歳以下・総合の高い順）"
+            chosen.append(r)
+    counts = {"年齢基準": 0, "80到達の見込み": 0, "空き枠": 0}
+    for r in chosen:
         r["三軍推奨"] = "推奨"
-    return limit, min(limit, len(cands))
+        r["三軍理由"] = r["_tri"]
+        key = "年齢基準" if r["_tri"].startswith("年齢基準") else ("空き枠" if r["_tri"].startswith("空き枠") else "80到達の見込み")
+        counts[key] += 1
+    for r in rows:
+        r.pop("_tri", None)
+        r.setdefault("三軍理由", "")
+    counts["枠から漏れた基準該当者"] = max(0, len(g1) + len(g2) - limit)
+    return limit, len(chosen), counts
 
 
 # ----------------------------------------------------------------------
@@ -680,7 +711,7 @@ def main():
 
     log("5/6 自チームの選手を計算しています…")
     rows = compute_players(own, team_name, ov_models, pred, pred_rookie, gba)
-    limit, assigned = assign_third_squad(rows)
+    limit, assigned, tri_counts = assign_third_squad(rows)
 
     log("6/6 オフの編成提案を作っています…")
     import roster_plan
@@ -705,6 +736,9 @@ def main():
         "選手数": len(rows),
         "新人数": len(rookies),
         "三軍推奨数": assigned,
+        "三軍推奨の内訳": tri_counts,
+        "三軍推奨の基準": {"年齢ごとの総合": {str(k): v for k, v in sorted(THIRD_SQUAD_AGE_MIN.items())},
+                           "見込みの総合": THIRD_SQUAD_POTENTIAL, "空き枠の年齢": THIRD_SQUAD_FILL_AGE},
         "三軍上限": limit,
         "総合の推定": ov_report,
         "予測モデルの誤差": {"既存選手": pred[3], "新人": pred_rookie[3]},
@@ -716,6 +750,7 @@ def main():
     log("")
     log("できあがり:")
     log(f"  選手 {len(rows)} 人（新人 {len(rookies)} 人、三軍推奨 {assigned} 人／上限 {limit} 人）")
+    log("  三軍推奨の内訳: " + "、".join(f"{k} {v}人" for k, v in tri_counts.items()))
     if top_rookie:
         log(f"  注目の新人: {top_rookie['名前']}（予測最大 {top_rookie['予測最大']}）")
     st = {}

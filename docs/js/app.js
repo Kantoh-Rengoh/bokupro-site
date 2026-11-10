@@ -41,7 +41,8 @@
   // 判定の色（推奨＝赤系、検討＝黄系、昇格＝緑系、例外＝灰色、育成へ＝青系）
   const JD_VAR = { '推奨': 'var(--color-bad)', '自由契約': 'var(--color-bad)', '検討': 'var(--color-warn)', '育成再契約': 'var(--color-warn)',
     '即昇格': 'var(--color-ok)', '先行昇格': 'var(--color-ok)', '支配下': 'var(--color-ok)', '育成へ': 'var(--s-new)',
-    '残留（例外）': 'var(--c7)', '残留（検証中）': 'var(--c7)', '1位': 'var(--gold)', '外れ1位': 'var(--c5)' };
+    '残留（例外）': 'var(--c7)', '残留（検証中）': 'var(--c7)', '1位': 'var(--gold)', '外れ1位': 'var(--c5)',
+    '戦力外': 'var(--color-bad)', '次点': 'var(--color-warn)' };
 
   // ---------- 小さな道具 ----------
   const $ = (id) => document.getElementById(id);
@@ -104,6 +105,14 @@
     const ys = PLAYERS.map(r => Number(r['ドラフト年'])).filter(y => Number.isFinite(y) && y > 0);
     return ys.length ? Math.max(...ys) + 1 : null;
   }
+  // 三軍推奨の基準の説明（基準の数字は meta.json にあればそれを使う）
+  function triNote(tri) {
+    const c = (META && META['三軍推奨の基準']) || { '年齢ごとの総合': { '20': 55, '21': 60, '22': 65, '23': 70, '24': 75, '25': 80 }, '見込みの総合': 80, '空き枠の年齢': 20 };
+    const ages = Object.keys(c['年齢ごとの総合']).sort((a, b) => Number(a) - Number(b)).map(a => `${a}歳で${c['年齢ごとの総合'][a]}`).join('・');
+    const b = META && META['三軍推奨の内訳'];
+    const br = b ? `（内訳：年齢基準 ${b['年齢基準']}人、${c['見込みの総合']}到達の見込み ${b['80到達の見込み']}人、空き枠 ${b['空き枠']}人${b['枠から漏れた基準該当者'] ? `。枠が足りず ${b['枠から漏れた基準該当者']}人は入れていません` : ''}）` : '';
+    return `「三軍推奨」は、一軍以外の選手から、①年齢ごとの総合の基準（${ages} 以上）を満たす選手、②基準は満たさないが総合${c['見込みの総合']}に届く見込み（予測最大${c['見込みの総合']}以上）の選手、③それでも空きがあれば${c['空き枠の年齢']}歳以下を総合の高い順、の順に${tri}人（全選手数−70）まで選んだものです${br}。`;
+  }
   function drawNote() {
     const y = seasonYear();
     const save = META && META['ゲーム内日付'] ? `ゲーム内 ${META['ゲーム内日付']}${META['フェーズ'] ? '・' + META['フェーズ'] : ''}` : (y ? NOTE_SAVE.replace('{Y}', y) : 'セーブ時点');
@@ -113,7 +122,7 @@
       `能力・総合はセーブ時点（${save}）の値です。選手名をタップすると詳細が開きます。` +
       '名前の右は、ポジション（塗りつぶし＝本職、枠だけ＝守れる別ポジション）・ドラフト順位・総合・年齢です。' +
       `前年比（各能力も同じ）は${base}からの伸びです。誤差は予測最大のずれの目安です。将来性の丸の色は等級（A〜E）ごとに分けています。` +
-      `「三軍推奨」は、一軍以外・24歳以下・伸びしろ5以上の選手を、新人→伸びしろ10以上→その他の順に予測最大の高い選手から${tri}人（全選手数−70）選んだものです。` +
+      triNote(tri) +
       '練習メニューは、その役割の総合への影響が大きく、まだ低い能力を伸ばすものです。「入団時ハズレ」は、入団時の実際の能力がスカウト評価を大きく下回った選手です。' +
       '二刀流の選手の総合は、ゲームの表示に合わせた合成値（高い側×0.75＋低い側×0.25）で、予測最大・伸びしろは投手・野手の高い側の値です。詳細の「投手として」「野手として」はそれぞれの能力だけで計算しています（参考値）。';
     const info = $('datainfo');
@@ -185,7 +194,7 @@
     const tags = el('div', 'tags');
     tags.append(el('span', 'pill', String(r['状態'])));
     if (r['入団時ハズレ'] === 'ハズレ') tags.append(el('span', 'miss', '入団時ハズレ'));
-    if (r['三軍推奨'] === '推奨') tags.append(el('span', 'trirec', '三軍推奨'));
+    if (r['三軍推奨'] === '推奨') { tags.append(el('span', 'trirec', '三軍推奨')); if (r['三軍理由']) tags.append(el('span', 'tag', String(r['三軍理由']))); }
     tags.append(gradeTag('将来性', r['将来性']));
     tags.append(gradeTag('注目度', r['注目度']));
     tags.append(el('span', 'tag', '背番号 ' + String(r['背番号'])));
@@ -411,9 +420,9 @@
       numCell(tr, '予測最大', r['予測最大'], 'pm');
       numCell(tr, '伸びしろ', '+' + String(r['伸びしろ']), 'up');
       const jd = el('span'); jd.append(jdPill(r['判定']));
-      if (r['境界']) { const m = el('span', 'bd', '境界'); m.title = '予測最大がしきい値ぎりぎり（±1）。予測の誤差で判定が入れ替わることがあります'; jd.append(m); }
+      if (r['境界']) { const m = el('span', 'bd', '境界'); m.title = '予測最大が基準に近い候補。予測の誤差で候補から外れることがあります'; jd.append(m); }
       cell(tr, '判定', jd, 'jd');
-      cell(tr, '理由', el('small', null, String(r['理由'] || '') + (r['境界'] ? '（しきい値ぎりぎり）' : '')), 'rs');
+      cell(tr, '理由', el('small', null, String(r['理由'] || '') + (r['境界'] ? '（予測最大が基準に近い）' : '')), 'rs');
       tb.append(tr);
     }
     t.append(tb);
@@ -450,53 +459,125 @@
     t.append(tb);
     return t;
   }
-  function hcClass(kind, v, lim) {
-    if (kind === '支配下' || kind === '育成') { if (v > lim['支配下' === kind ? '支配下' : '育成']) return 'over'; }
-    if (kind === '育成' && v > lim['育成目標']) return 'near';
-    if (kind === '支配下' || kind === '育成') return 'ok';
-    return '';
+  // ドラフトの指名人数（入力欄）
+  function planPicks() {
+    const n = (id) => Math.max(0, Math.min(30, Math.floor(Number($(id).value) || 0)));
+    return { '支配下': n('dp_reg'), '育成': n('dp_dev') };
   }
-  function drawHeadcount() {
+  // 指名人数から、戦力外にする人数と対象を決める（ドラフト後に目標人数になるように）
+  function planCalc() {
+    const hc = PLAN['人数'], R = PLAN['戦力外'], pk = planPicks();
+    const mv = hc['移動後'], tg = hc['目標'];
+    const one = (pool) => {
+      const cands = R[pool] || [];
+      const need = mv[pool] + pk[pool] - tg[pool];          // 減らす必要がある人数（マイナスなら空き）
+      const n = Math.max(0, Math.min(need, cands.length));
+      return { need, n, cut: cands.slice(0, n), next: cands.slice(n), short: Math.max(0, need - cands.length) };
+    };
+    const reg = one('支配下'), dev = one('育成');
+    const pre = { '支配下': mv['支配下'] - reg.n, '育成': mv['育成'] - dev.n };
+    const post = { '支配下': pre['支配下'] + pk['支配下'], '育成': pre['育成'] + pk['育成'] };
+    for (const o of [pre, post]) { o['合計'] = o['支配下'] + o['育成']; o['三軍上限'] = o['合計'] - hc['上限']['三軍の基準']; }
+    return { pk, reg, dev, pre, post };
+  }
+  function drawHeadcount(c) {
     const box = $('hc'); box.replaceChildren();
-    const hc = PLAN['人数']; if (!hc) return;
-    const lim = hc['上限'];
-    const dpReg = Math.max(0, Number($('dp_reg').value) || 0), dpDev = Math.max(0, Number($('dp_dev').value) || 0);
-    const after = hc['提案後'];
-    const post = { '支配下': after['支配下'] + dpReg, '育成': after['育成'] + dpDev };
-    post['合計'] = post['支配下'] + post['育成']; post['三軍上限'] = post['合計'] - lim['三軍の基準'];
+    const hc = PLAN['人数'], tg = hc['目標'], lim = hc['上限'];
     const t = el('table', 'hc');
-    const hr = el('tr'); ['', '現在', '提案後', 'ドラフト後', '上限'].forEach(h => hr.append(el('th', null, h))); t.append(hr);
-    const limText = { '支配下': String(lim['支配下']), '育成': `${lim['育成']}`, '合計': '—', '三軍上限': `合計−${lim['三軍の基準']}` };
+    const hr = el('tr'); ['', '現在', 'ドラフト前', 'ドラフト後', '目標'].forEach(h => hr.append(el('th', null, h))); t.append(hr);
+    const tgText = { '支配下': String(tg['支配下']), '育成': String(tg['育成']), '合計': String(tg['支配下'] + tg['育成']), '三軍上限': `合計−${lim['三軍の基準']}` };
     for (const k of ['支配下', '育成', '合計', '三軍上限']) {
       const tr = el('tr'); tr.append(el('td', null, k));
-      for (const src of [hc['現在'], after, post]) {
-        const td = el('td', hcClass(k, src[k], lim)); td.append(el('b', null, String(src[k]))); tr.append(td);
-      }
-      const tl = el('td'); tl.append(el('b', null, limText[k]));
-      if (k === '育成') tl.append(el('small', null, `目標${lim['育成目標']}以下`));
-      tr.append(tl); t.append(tr);
+      const cur = el('td'); cur.append(el('b', null, String(hc['現在'][k]))); tr.append(cur);
+      const pre = el('td'); pre.append(el('b', null, String(c.pre[k]))); tr.append(pre);
+      const isPool = k === '支配下' || k === '育成';
+      const post = el('td', isPool ? (c.post[k] > tg[k] ? 'over' : c.post[k] < tg[k] ? 'near' : 'ok') : '');
+      post.append(el('b', null, String(c.post[k])));
+      if (isPool && c.post[k] < tg[k]) post.append(el('small', null, `空き${tg[k] - c.post[k]}`));
+      if (isPool && c.post[k] > tg[k]) post.append(el('small', null, `${c.post[k] - tg[k]}人多い`));
+      tr.append(post);
+      const tl = el('td'); tl.append(el('b', null, tgText[k])); tr.append(tl); t.append(tr);
     }
     box.append(t);
-    const b = PLAN['人数']['内訳'] || {};
-    const note = el('div', 'count');
-    note.textContent = `提案後 ＝ 支配下→育成 ${b['支配下→育成']}人、支配下→自由契約 ${b['支配下→自由契約']}人（検討 ${b['支配下→自由契約（検討）']}人は含めず）、育成→支配下 ${b['育成→支配下']}人、育成→自由契約 ${b['育成→自由契約']}人、満了→支配下 ${b['満了→支配下']}人・育成再契約 ${b['満了→育成再契約']}人・自由契約 ${b['満了→自由契約']}人 を実行した場合`;
-    box.append(note);
+    const mv = hc['移動後'];
+    const line = (pool, x) => {
+      const d = el('div', 'count');
+      let msg = `${pool}：入れ替え後 ${mv[pool]}人 ＋ 指名 ${c.pk[pool]}人 − 目標 ${tg[pool]}人 ＝ `;
+      if (x.need <= 0) msg += `戦力外は不要（${x.need < 0 ? `あと${-x.need}人の空き` : 'ちょうど'}）`;
+      else msg += `戦力外 ${x.need}人` + (x.short ? `。ただし候補は${x.n}人まで（総合${PLAN['戦力外']['見込みの総合']}以上の見込みがある選手は残すため、あと${x.short}人は選べません）` : '');
+      d.textContent = msg; return d;
+    };
+    box.append(line('支配下', c.reg), line('育成', c.dev));
+    const b = hc['内訳'] || {};
+    box.append(el('div', 'count', `入れ替え ＝ 支配下→育成 ${b['支配下→育成']}人、育成→支配下 ${b['育成→支配下']}人。「ドラフト前」は入れ替えと戦力外をすべて実行した後の人数です。`));
+  }
+  function planSection(no, title, countText, desc, rows, emptyText) {
+    const sec = el('div', 'pls');
+    const h = el('h3'); h.append(el('span', 'no', String(no)), document.createTextNode(title), el('span', 'cnt', countText)); sec.append(h);
+    if (desc) sec.append(el('p', 'desc', desc));
+    if (rows.length) sec.append(playerTable(rows)); else sec.append(el('div', 'none', emptyText || '該当する選手はいません。'));
+    return sec;
+  }
+  function drawPlanLists(c) {
+    const X = PLAN['入れ替え'], R = PLAN['戦力外'], nextN = Number(R['次点の人数']) || 5;
+    const mark = (r, jd, why) => Object.assign({}, r, { '判定': jd, '理由': why === undefined ? r['理由'] : why });
+    const cutDev = new Set(c.dev.cut.map(r => r['id']));
+    const devRank = {}; (R['育成'] || []).forEach(r => { devRank[r['id']] = r; });
+    const lists = $('plan_lists'); lists.replaceChildren();
+
+    // 1. 支配下 → 育成（育成へ移した後に戦力外になった選手は 2 へ）
+    const l1 = X['支配下→育成'];
+    const rows1 = l1['行'].filter(r => !cutDev.has(r['id']));
+    lists.append(planSection(1, l1['題'], `${rows1.length}人`, l1['説明'], rows1));
+
+    // 2. 支配下 → 自由契約
+    const movers = c.dev.cut.filter(r => r['元']).map(r => mark(r, '戦力外', `${r['理由']}（${r['元']}）`));
+    const rows2 = c.reg.cut.map(r => mark(r, '戦力外')).concat(movers);
+    const next2 = c.reg.next.slice(0, nextN).map(r => mark(r, '次点'));
+    lists.append(planSection(2, '支配下 → 自由契約', `戦力外 ${rows2.length}人` + (next2.length ? `・次点 ${next2.length}人` : ''), R['説明'], rows2.concat(next2),
+      c.reg.need <= 0 ? '戦力外は不要です（支配下に空きがあります）。' : '候補がいません（総合80以上の見込みがある選手だけです）。'));
+
+    // 3. 育成 → 支配下
+    const l3 = X['育成→支配下'];
+    lists.append(planSection(3, l3['題'], `${l3['行'].length}人`, l3['説明'], l3['行']));
+
+    // 4. 育成 → 自由契約（契約満了の選手は 5、支配下2年目の選手は 2 に出す）
+    const rows4 = c.dev.cut.filter(r => !r['満了'] && !r['元']).map(r => mark(r, '戦力外'));
+    const next4 = c.dev.next.filter(r => !r['満了'] && !r['元']).slice(0, nextN).map(r => mark(r, '次点'));
+    const keep4 = (R['例外'] || []).filter(r => !r['満了']);
+    lists.append(planSection(4, '育成 → 自由契約', `戦力外 ${rows4.length}人` + (next4.length ? `・次点 ${next4.length}人` : ''),
+      '育成の戦力外のうち、契約満了ではない選手。「次点」は今回の人数には入らなかった候補です。例外リストの選手は「残留（検証中）」。', rows4.concat(next4, keep4),
+      c.dev.need <= 0 ? '戦力外は不要です（育成に空きがあります）。' : '該当する選手はいません。'));
+
+    // 5. 育成契約満了
+    const l5 = X['満了'];
+    const rows5 = l5['行'].map(r => {
+      if (r['判定'] === '支配下') return r;
+      if (cutDev.has(r['id'])) return mark(r, '自由契約', devRank[r['id']] ? devRank[r['id']]['理由'] : r['理由']);
+      return mark(r, '育成再契約', devRank[r['id']] ? `候補だが今回の人数には入らず（${devRank[r['id']]['理由']}）` : r['理由']);
+    });
+    const n5 = (jd) => rows5.filter(r => r['判定'] === jd).length;
+    lists.append(planSection(5, l5['題'], `${rows5.length}人（支配下 ${n5('支配下')}・育成再契約 ${n5('育成再契約')}・自由契約 ${n5('自由契約')}）`, l5['説明'], rows5,
+      '今オフに契約が満了する育成選手はいません。'));
+  }
+  function refreshPlan() {
+    const c = planCalc();
+    drawHeadcount(c);
+    drawPlanLists(c);
+    try { localStorage.setItem('bp_picks', JSON.stringify(c.pk)); } catch (e) { /* 保存できなくても動く */ }
   }
   function drawPlan() {
     const asof = $('plan_asof');
     if (!PLAN) { asof.textContent = '編成提案のデータ（data/roster_plan.json）がまだありません。セーブデータをアップロードすると自動で作られます。'; return; }
-    asof.textContent = `ゲーム内 ${PLAN['ゲーム内日付']}${PLAN['フェーズ'] ? '・' + PLAN['フェーズ'] : ''} のセーブデータから作成`;
+    const tg = PLAN['人数']['目標'];
+    asof.textContent = `ゲーム内 ${PLAN['ゲーム内日付']}${PLAN['フェーズ'] ? '・' + PLAN['フェーズ'] : ''} のセーブデータから作成。ドラフト後に 支配下${tg['支配下']}人・育成${tg['育成']}人 になるように戦力外の人数を決めます。`;
     $('dpick').hidden = false;
-    drawHeadcount();
-    $('plan_legend').replaceChildren(...[['推奨・自由契約', 'var(--color-bad)'], ['検討・育成再契約', 'var(--color-warn)'], ['昇格・支配下', 'var(--color-ok)'], ['育成へ', 'var(--s-new)'], ['例外・残留', 'var(--c7)']].map(([t, c]) => { const s = el('span'); s.style.setProperty('--k', c); s.append(el('i'), document.createTextNode(t)); return s; }));
-    const lists = $('plan_lists'); lists.replaceChildren();
-    for (const L of PLAN['一覧'] || []) {
-      const sec = el('div', 'pls');
-      const h = el('h3'); h.append(el('span', 'no', String(L['番号'])), document.createTextNode(String(L['題'])), el('span', 'cnt', `${L['行'].length}人`)); sec.append(h);
-      sec.append(el('p', 'desc', String(L['説明'] || '')));
-      if (L['行'].length) sec.append(playerTable(L['行'])); else sec.append(el('div', 'none', '該当する選手はいません。'));
-      lists.append(sec);
-    }
+    try {
+      const saved = JSON.parse(localStorage.getItem('bp_picks') || 'null');
+      if (saved) { $('dp_reg').value = Number(saved['支配下']) || 0; $('dp_dev').value = Number(saved['育成']) || 0; }
+    } catch (e) { /* 無視 */ }
+    $('plan_legend').replaceChildren(...[['戦力外・自由契約', 'var(--color-bad)'], ['次点・育成再契約', 'var(--color-warn)'], ['昇格・支配下', 'var(--color-ok)'], ['育成へ', 'var(--s-new)'], ['例外・残留', 'var(--c7)']].map(([t, c]) => { const s = el('span'); s.style.setProperty('--k', c); s.append(el('i'), document.createTextNode(t)); return s; }));
+    refreshPlan();
     const D = PLAN['ドラフト'] || {}; const box = $('dft'); box.replaceChildren();
     const sec = el('div', 'pls');
     const h = el('h3'); h.append(el('span', 'no', '6'), document.createTextNode(`ドラフト候補（${(D['対象の経歴'] || ['高卒']).join('・')}で将来性A）`), el('span', 'cnt', `${(D['候補'] || []).length}人／全候補 ${D['候補数'] || 0}人`)); sec.append(h);
@@ -506,7 +587,7 @@
     if ((D['候補'] || []).length) sec.append(draftTable(D['候補'])); else sec.append(el('div', 'none', D['段階'] && D['段階'] !== 'scheduled' ? '今はドラフト候補の時期ではありません（ドラフト後のセーブデータ）。' : 'ドラフト候補のデータがありません。'));
     box.append(sec);
     $('plan_note').textContent = (PLAN['注意'] || '') + (D['予測誤差'] ? ` ドラフト候補の予測誤差（平均）：±${D['予測誤差']}。` : '');
-    ['dp_reg', 'dp_dev'].forEach(id => $(id).addEventListener('input', drawHeadcount));
+    ['dp_reg', 'dp_dev'].forEach(id => $(id).addEventListener('input', refreshPlan));
   }
 
   // ---------- ドラフト候補タブ ----------
@@ -690,7 +771,7 @@
       const [players, qa, meta, plan, draft] = await Promise.all([loadJson(PLAYERS_URL), loadJson(QA_URL).catch(() => []), loadJson(META_URL).catch(() => null), loadJson(PLAN_URL).catch(() => null), loadJson(DRAFT_URL).catch(() => null)]);
       if (!Array.isArray(players)) throw new Error('players.json の形式が違います（配列ではありません）');
       PLAYERS = players; QA = Array.isArray(qa) ? qa : []; META = meta && typeof meta === 'object' ? meta : null;
-      PLAN = plan && typeof plan === 'object' && Array.isArray(plan['一覧']) ? plan : null;
+      PLAN = plan && typeof plan === 'object' && plan['戦力外'] && plan['入れ替え'] && plan['人数'] ? plan : null;
       DRAFT = draft && typeof draft === 'object' && Array.isArray(draft['候補']) ? draft : null;
     } catch (err) {
       console.error(err);
