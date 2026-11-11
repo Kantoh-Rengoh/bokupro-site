@@ -365,3 +365,6 @@ h1 {
 .pl.dim { opacity: .55; }
 .fit { display: inline-flex; align-items: center; gap: .3rem; font-size: var(--fs-caption); font-weight: 700; padding: .12rem .55rem; border-radius: 999px; color: var(--c6); border: 1px solid color-mix(in srgb, var(--c6) 50%, transparent); background: color-mix(in srgb, var(--c6) 10%, transparent); }
 .memo { font-size: var(--fs-caption); color: var(--color-fg-muted); line-height: 1.5; }
+
+/* 二刀流の絞り込みボタン（成長予測・ドラフト候補のポジション欄） */
+.chip[data-value="二刀流"] { --k: #ff9cc6; }

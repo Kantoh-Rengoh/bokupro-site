@@ -13,6 +13,7 @@ build.py から呼ばれ、次の2つを書き出す。
     （ドラフトの指名人数はページで入力する。人数が変わると戦力外の人数も変わる）
   ・戦力外の候補は、予測最大が 80 未満の選手だけ。次の順に優先して選ぶ
       ① 25歳以上で総合80未満  ② 24歳で総合75未満  ③ 23歳で総合70未満  ④ それ以外（予測最大80未満）
+    支配下だけは、その前に「28歳以上で総合83以下」を最優先の候補にする（予測最大に関係なく対象）
   ・一覧: 1. 支配下 → 育成  2. 支配下 → 自由契約  3. 育成 → 支配下  4. 育成 → 自由契約
           5. 育成契約満了の選手（支配下／育成再契約／自由契約）  6. ドラフト候補（高卒で将来性A）
     2・4・5 の自由契約は、ページ側で指名人数に合わせて上位から選ぶ
@@ -41,7 +42,10 @@ D2C_EARLY_PMAX = 90            # 予測最大がこれ以上かつ…
 D2C_EARLY_OVERALL = 75         # …総合がこれ以上 → 先行昇格
 
 # 2・4・5. 戦力外（自由契約）の候補と優先順位
-RELEASE_SAFE_PMAX = 80         # 予測最大がこれ以上（総合80以上の見込みあり）の選手は候補にしない
+# 最優先（支配下だけ）：この年齢以上で総合がこの値以下の選手。予測最大が高くても候補にする
+RELEASE_VETERAN_AGE = 28
+RELEASE_VETERAN_OVERALL = 83
+RELEASE_SAFE_PMAX = 80         # 予測最大がこれ以上（総合80以上の見込みあり）の選手は候補にしない（上の最優先を除く）
 RELEASE_TIERS = (              # (段階, 年齢の下限, 年齢の上限, 総合がこれ未満)。上から順に優先して戦力外にする
     (1, 25, 99, 80),           # ① 25歳以上で総合80未満
     (2, 24, 24, 75),           # ② 24歳で総合75未満
@@ -134,7 +138,7 @@ def predict_prospect(pm, ov_models, role, ab6, age, grade, attention, dev_pot, g
 # ======================================================================
 # 在籍選手の判定
 # ======================================================================
-TIER_MARK = {1: "①", 2: "②", 3: "③", 4: "④"}
+TIER_MARK = {0: "最優先", 1: "①", 2: "②", 3: "③", 4: "④"}
 
 
 def release_tier(age, overall, pmax):
@@ -181,15 +185,18 @@ def classify_players(rows, expiry_ids, B):
 
         def as_candidate(pool):
             """戦力外の候補として登録する（例外リストの選手は登録しない）"""
-            if tier is None:
+            t, tt = tier, tier_text
+            if pool == "支配下" and age >= RELEASE_VETERAN_AGE and ov <= RELEASE_VETERAN_OVERALL:
+                t, tt = 0, f"最優先：{RELEASE_VETERAN_AGE}歳以上で総合{RELEASE_VETERAN_OVERALL}以下"
+            if t is None:
                 return
             if r["id"] in D2F_KEEP_IDS:
                 k = dict(b); k["判定"], k["理由"] = "残留（検証中）", "例外リスト"
                 keep.append(k)
                 return
             c = dict(b)
-            c["段階"], c["理由"] = tier, tier_text
-            c["境界"] = pmax >= RELEASE_SAFE_PMAX - RELEASE_BORDER
+            c["段階"], c["理由"] = t, tt
+            c["境界"] = t != 0 and pmax >= RELEASE_SAFE_PMAX - RELEASE_BORDER
             cand[pool].append(c)
 
         if dev:
@@ -489,6 +496,7 @@ def build_plan(B, p0, own, rows, retired, ov_models, game_dt, out_path, draft_pa
             "次点の人数": RELEASE_NEXT_SHOW, "見込みの総合": RELEASE_SAFE_PMAX,
             "説明": (f"ドラフト後に支配下{TARGET_REGISTERED_AFTER_DRAFT}人・育成{TARGET_DEVELOPMENT_AFTER_DRAFT}人になる人数だけ、候補の上から戦力外にします。"
                      f"候補は予測最大{RELEASE_SAFE_PMAX}未満の選手だけ（総合{RELEASE_SAFE_PMAX}以上の見込みがある選手は除外）。優先順は {tier_text}（予測最大{RELEASE_SAFE_PMAX}未満）。"
+                     f"支配下だけは、これより先に「{RELEASE_VETERAN_AGE}歳以上で総合{RELEASE_VETERAN_OVERALL}以下」の選手を最優先の候補にします（予測最大に関係なく対象）。"
                      "同じ段階の中では予測最大の低い順です。"),
         },
         "ドラフト": plan_draft,

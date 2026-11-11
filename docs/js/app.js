@@ -135,7 +135,7 @@
     const q = BP.q.trim();
     const rows = PLAYERS.filter(r =>
       (!BP.status || r['状態'] === BP.status) &&
-      (!BP.role || r['役割'] === BP.role) &&
+      (!BP.role || (BP.role === '二刀流' ? !!r['二刀流'] : r['役割'] === BP.role)) &&
       (!BP.kubun || r['区分'] === BP.kubun) &&
       (!BP.dy || String(r['ドラフト年']) === BP.dy) &&
       (!BP.tri ||
@@ -152,7 +152,10 @@
       else if (numeric) { x = Number(x); y = Number(y); }
       else { x = String(x); y = String(y); }
       if (k === '将来性') return (x < y ? -1 : x > y ? 1 : 0) * -BP.dir;
-      return (x < y ? -1 : x > y ? 1 : 0) * BP.dir || (num(b['予測最大']) - num(a['予測最大']));
+      const c = (x < y ? -1 : x > y ? 1 : 0) * BP.dir;
+      if (c) return c;
+      if (k === '年齢') return (num(b['現在']) - num(a['現在'])) || (num(b['予測最大']) - num(a['予測最大']));   // 同じ年齢の中は総合の高い順
+      return num(b['予測最大']) - num(a['予測最大']);
     });
     return rows;
   }
@@ -667,7 +670,7 @@
   function draftFiltered() {
     const q = DF.q.trim();
     const rows = (DRAFT['候補'] || []).filter(r =>
-      (!DF.role || r['役割'] === DF.role) &&
+      (!DF.role || (DF.role === '二刀流' ? !!r['二刀流'] : r['役割'] === DF.role)) &&
       (!DF.grade || (DF.grade === 'D' ? ['D', 'E', '-'].includes(String(r['将来性'])) : r['将来性'] === DF.grade)) &&
       (!DF.attn || (DF.attn === 'D' ? ['D', 'E', '-'].includes(String(r['注目度'])) : r['注目度'] === DF.attn)) &&
       (!q || String(r['名前']).includes(q)));
