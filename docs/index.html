@@ -111,11 +111,17 @@
     <h2>オフの編成提案</h2>
     <div class="count" id="plan_asof">読み込んでいます…</div>
     <div class="hcwrap" id="hc"></div>
-    <div class="ctl dpick" id="dpick" hidden>
-      <span class="lbl">ドラフトの指名人数</span>
-      <label class="dpl">支配下 <input class="dpi" id="dp_reg" type="number" inputmode="numeric" min="0" max="20" value="0"></label>
-      <label class="dpl">育成 <input class="dpi" id="dp_dev" type="number" inputmode="numeric" min="0" max="20" value="0"></label>
-      <span class="count">人数を入れると、ドラフト後に支配下68人・育成80人になるように戦力外の人数が変わります</span>
+    <div class="dpick" id="dpick" hidden>
+      <div class="ctl">
+        <span class="lbl">支配下の目標（ドラフト前）</span>
+        <span class="ctl" id="tg_chips"></span>
+      </div>
+      <div class="ctl">
+        <span class="lbl">ドラフトの指名人数</span>
+        <label class="dpl">支配下 <input class="dpi" id="dp_reg" type="number" inputmode="numeric" min="0" max="20" value="0"></label>
+        <label class="dpl">育成 <input class="dpi" id="dp_dev" type="number" inputmode="numeric" min="0" max="20" value="0"></label>
+      </div>
+      <div class="count">目標を選ぶと、支配下をその人数まで減らす案に切り替わります。育成の指名人数を入れると、ドラフト後に育成80人になるように育成の戦力外の人数が変わります。</div>
     </div>
     <div class="legend" id="plan_legend"></div>
     <div class="tiles ptiles" id="plan_tiles"></div>

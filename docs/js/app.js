@@ -36,14 +36,14 @@
   let PLAN = null;      // オフの編成提案（data/roster_plan.json、無くても動く）
   let DRAFT = null;     // ドラフト候補（draft.json、無くても動く）
   const DF = { role: '', grade: '', attn: '', sort: '予測最大', dir: -1, q: '', open: new Set(), picked: new Set(), frames: {}, rec: {} };
-  const PLV = { open: '' };   // 編成提案で開いている枠（空なら全部閉じている）
+  const PLV = { open: '', target: '' };   // 編成提案で開いている枠（空なら全部閉じている）と、支配下の目標人数
   const LOT_VAR = { '高': 'var(--color-bad)', '中': 'var(--color-warn)', '低': 'var(--color-ok)' };
   const FRAME_VAR = { '1位候補': 'var(--gold)', '狙い目': 'var(--s-grow)', '育成候補': 'var(--s-new)' };
   // 判定の色（推奨＝赤系、検討＝黄系、昇格＝緑系、例外＝灰色、育成へ＝青系）
   const JD_VAR = { '推奨': 'var(--color-bad)', '自由契約': 'var(--color-bad)', '検討': 'var(--color-warn)', '育成再契約': 'var(--color-warn)',
     '即昇格': 'var(--color-ok)', '先行昇格': 'var(--color-ok)', '支配下': 'var(--color-ok)', '育成へ': 'var(--s-new)',
     '残留（例外）': 'var(--c7)', '残留（検証中）': 'var(--c7)', '1位': 'var(--gold)', '外れ1位': 'var(--c5)',
-    '戦力外': 'var(--color-bad)', '次点': 'var(--color-warn)' };
+    '戦力外': 'var(--color-bad)', '次点': 'var(--color-warn)', '昇格': 'var(--color-ok)', '残留（ポジション確保）': 'var(--c7)' };
 
   // ---------- 小さな道具 ----------
   const $ = (id) => document.getElementById(id);
@@ -437,52 +437,56 @@
     const n = (id) => Math.max(0, Math.min(30, Math.floor(Number($(id).value) || 0)));
     return { '支配下': n('dp_reg'), '育成': n('dp_dev') };
   }
-  // 指名人数から、戦力外にする人数と対象を決める（ドラフト後に目標人数になるように）
+  // 選んだ目標の案（支配下の枠）と指名人数から、育成の戦力外の人数と対象を決める
   function planCalc() {
     const hc = PLAN['人数'], R = PLAN['戦力外'], pk = planPicks();
-    const mv = hc['移動後'], tg = hc['目標'];
-    const one = (pool) => {
-      const cands = R[pool] || [];
-      const need = mv[pool] + pk[pool] - tg[pool];          // 減らす必要がある人数（マイナスなら空き）
-      const n = Math.max(0, Math.min(need, cands.length));
-      return { need, n, cut: cands.slice(0, n), next: cands.slice(n), short: Math.max(0, need - cands.length) };
-    };
-    const reg = one('支配下'), dev = one('育成');
-    const pre = { '支配下': mv['支配下'] - reg.n, '育成': mv['育成'] - dev.n };
+    const A = PLAN['案'][PLV.target];
+    const cands = R['育成'] || [];
+    const need = A['育成'] + pk['育成'] - hc['育成の目標'];      // 減らす必要がある人数（マイナスなら空き）
+    const n = Math.max(0, Math.min(need, cands.length));
+    const dev = { need, n, cut: cands.slice(0, n), next: cands.slice(n), short: Math.max(0, need - cands.length) };
+    const pre = { '支配下': A['支配下'], '育成': A['育成'] - dev.n };
     const post = { '支配下': pre['支配下'] + pk['支配下'], '育成': pre['育成'] + pk['育成'] };
     for (const o of [pre, post]) { o['合計'] = o['支配下'] + o['育成']; o['三軍上限'] = o['合計'] - hc['上限']['三軍の基準']; }
-    return { pk, reg, dev, pre, post };
+    return { pk, A, dev, pre, post, target: Number(PLV.target) };
   }
   function drawHeadcount(c) {
     const box = $('hc'); box.replaceChildren();
-    const hc = PLAN['人数'], tg = hc['目標'], lim = hc['上限'];
+    const hc = PLAN['人数'], lim = hc['上限'], A = c.A;
     const t = el('table', 'hc');
     const hr = el('tr'); ['', '現在', 'ドラフト前', 'ドラフト後', '目標'].forEach(h => hr.append(el('th', null, h))); t.append(hr);
-    const tgText = { '支配下': String(tg['支配下']), '育成': String(tg['育成']), '合計': String(tg['支配下'] + tg['育成']), '三軍上限': `合計−${lim['三軍の基準']}` };
     for (const k of ['支配下', '育成', '合計', '三軍上限']) {
       const tr = el('tr'); tr.append(el('td', null, k));
       const cur = el('td'); cur.append(el('b', null, String(hc['現在'][k]))); tr.append(cur);
-      const pre = el('td'); pre.append(el('b', null, String(c.pre[k]))); tr.append(pre);
-      const isPool = k === '支配下' || k === '育成';
-      const post = el('td', isPool ? (c.post[k] > tg[k] ? 'over' : c.post[k] < tg[k] ? 'near' : 'ok') : '');
-      post.append(el('b', null, String(c.post[k])));
-      if (isPool && c.post[k] < tg[k]) post.append(el('small', null, `空き${tg[k] - c.post[k]}`));
-      if (isPool && c.post[k] > tg[k]) post.append(el('small', null, `${c.post[k] - tg[k]}人多い`));
-      tr.append(post);
-      const tl = el('td'); tl.append(el('b', null, tgText[k])); tr.append(tl); t.append(tr);
+      // ドラフト前：支配下は目標どおりか
+      const pre = el('td', k === '支配下' ? (c.pre[k] > c.target ? 'over' : c.pre[k] < c.target ? 'near' : 'ok') : '');
+      pre.append(el('b', null, String(c.pre[k])));
+      if (k === '支配下' && c.pre[k] > c.target) pre.append(el('small', null, `${c.pre[k] - c.target}人多い`));
+      if (k === '支配下' && c.pre[k] < c.target) pre.append(el('small', null, `空き${c.target - c.pre[k]}`));
+      tr.append(pre);
+      // ドラフト後：支配下は上限、育成は目標と比べる
+      let cls = '', sm = '';
+      if (k === '支配下') { cls = c.post[k] > lim['支配下'] ? 'over' : 'ok'; if (c.post[k] > lim['支配下']) sm = `上限${lim['支配下']}を${c.post[k] - lim['支配下']}人超え`; }
+      if (k === '育成') { const g = hc['育成の目標']; cls = c.post[k] > g ? 'over' : c.post[k] < g ? 'near' : 'ok'; sm = c.post[k] > g ? `${c.post[k] - g}人多い` : c.post[k] < g ? `空き${g - c.post[k]}` : ''; }
+      const post = el('td', cls); post.append(el('b', null, String(c.post[k]))); if (sm) post.append(el('small', null, sm)); tr.append(post);
+      const tl = el('td');
+      if (k === '支配下') tl.append(el('b', null, String(c.target)), el('small', null, 'ドラフト前'));
+      else if (k === '育成') tl.append(el('b', null, String(hc['育成の目標'])), el('small', null, 'ドラフト後'));
+      else if (k === '三軍上限') tl.append(el('b', null, `合計−${lim['三軍の基準']}`));
+      else tl.append(el('b', null, '—'));
+      tr.append(tl); t.append(tr);
     }
     box.append(t);
-    const mv = hc['移動後'];
-    const line = (pool, x) => {
-      const d = el('div', 'count');
-      let msg = `${pool}：入れ替え後 ${mv[pool]}人 ＋ 指名 ${c.pk[pool]}人 − 目標 ${tg[pool]}人 ＝ `;
-      if (x.need <= 0) msg += `戦力外は不要（${x.need < 0 ? `あと${-x.need}人の空き` : 'ちょうど'}）`;
-      else msg += `戦力外 ${x.need}人` + (x.short ? `。ただし候補は${x.n}人まで（総合${PLAN['戦力外']['見込みの総合']}以上の見込みがある選手は残すため、あと${x.short}人は選べません）` : '');
-      d.textContent = msg; return d;
-    };
-    box.append(line('支配下', c.reg), line('育成', c.dev));
-    const b = hc['内訳'] || {};
-    box.append(el('div', 'count', `入れ替え ＝ 支配下→育成 ${b['支配下→育成']}人、育成→支配下 ${b['育成→支配下']}人。「ドラフト前」は入れ替えと戦力外をすべて実行した後の人数です。`));
+    const out = A['育成へ'].length + A['自由契約'].length;
+    box.append(el('div', 'count', `支配下：1〜2年目（育成にできない）${A['固定']}人は固定。残り ${A['枠']}枠を、3年目以降と育成の選手の総合順で決めます` +
+      (A['当落線'] !== null && A['当落線'] !== undefined ? `（当落線は総合${A['当落線']}）` : '') +
+      `。枠から外す ${out}人（育成へ ${A['育成へ'].length}人・自由契約 ${A['自由契約'].length}人）、育成から昇格 ${A['昇格'].length}人` +
+      (A['確保'].length ? `、ポジション確保のため残す ${A['確保'].length}人` : '') + '。'));
+    const x = c.dev, g = hc['育成の目標'];
+    let msg = `育成：入れ替え後 ${A['育成']}人 ＋ 指名 ${c.pk['育成']}人 − 目標 ${g}人 ＝ `;
+    if (x.need <= 0) msg += `戦力外は不要（${x.need < 0 ? `あと${-x.need}人の空き` : 'ちょうど'}）`;
+    else msg += `戦力外 ${x.need}人` + (x.short ? `。ただし候補は${x.n}人まで（総合${PLAN['戦力外']['見込みの総合']}以上の見込みがある選手は残すため、あと${x.short}人は選べません）` : '');
+    box.append(el('div', 'count', msg));
   }
   function planSection(no, title, countText, desc, rows, emptyText) {
     const sec = el('div', 'pls');
@@ -493,46 +497,47 @@
   }
   // 5つの枠の中身を作る（順番：育成→自由契約、支配下→自由契約、育成契約満了、育成→支配下、支配下→育成）
   function planBlocks(c) {
-    const X = PLAN['入れ替え'], R = PLAN['戦力外'], nextN = Number(R['次点の人数']) || 5;
+    const R = PLAN['戦力外'], A = c.A, D = PLAN['説明'] || {}, nextN = Number(R['次点の人数']) || 5;
     const mark = (r, jd, why) => Object.assign({}, r, { '判定': jd, '理由': why === undefined ? r['理由'] : why });
     const cutDev = new Set(c.dev.cut.map(r => r['id']));
+    const promoted = new Set(A['昇格'].map(r => r['id']));
     const devRank = {}; (R['育成'] || []).forEach(r => { devRank[r['id']] = r; });
 
-    // 育成 → 自由契約（契約満了の選手は「育成契約満了」、支配下2年目の選手は「支配下 → 自由契約」に出す）
-    const cutD = c.dev.cut.filter(r => !r['満了'] && !r['元']).map(r => mark(r, '戦力外'));
-    const nextD = c.dev.next.filter(r => !r['満了'] && !r['元']).slice(0, nextN).map(r => mark(r, '次点'));
+    // 育成 → 自由契約（契約満了の選手は「育成契約満了」に出す）
+    const cutD = c.dev.cut.filter(r => !r['満了']).map(r => mark(r, '戦力外'));
+    const nextD = c.dev.next.filter(r => !r['満了']).slice(0, nextN).map(r => mark(r, '次点'));
     const keepD = (R['例外'] || []).filter(r => !r['満了']);
-    // 支配下 → 自由契約
-    const movers = c.dev.cut.filter(r => r['元']).map(r => mark(r, '戦力外', `${r['理由']}（${r['元']}）`));
-    const cutR = c.reg.cut.map(r => mark(r, '戦力外')).concat(movers);
-    const nextR = c.reg.next.slice(0, nextN).map(r => mark(r, '次点'));
+    // 支配下 → 自由契約（次点＝当落線のすぐ上、残留＝ポジション確保）
+    const cutR = A['自由契約'], nextR = A['次点'], keepR = A['確保'];
     // 育成契約満了
-    const l5 = X['満了'];
+    const l5 = PLAN['満了'];
     const rowsE = l5['行'].map(r => {
-      if (r['判定'] === '支配下') return r;
+      if (promoted.has(r['id'])) return mark(r, '支配下', '昇格の対象');
       if (cutDev.has(r['id'])) return mark(r, '自由契約', devRank[r['id']] ? devRank[r['id']]['理由'] : r['理由']);
       return mark(r, '育成再契約', devRank[r['id']] ? `候補だが今回の人数には入らず（${devRank[r['id']]['理由']}）` : r['理由']);
     });
     const nE = (jd) => rowsE.filter(r => r['判定'] === jd).length;
-    // 育成 → 支配下 ／ 支配下 → 育成（育成へ移した後に戦力外になった選手は「支配下 → 自由契約」へ）
-    const l3 = X['育成→支配下'], l1 = X['支配下→育成'];
-    const rowsM = l1['行'].filter(r => !cutDev.has(r['id']));
-    const nMove = rowsM.filter(r => r['判定'] === '育成へ').length;
+    // 育成 → 支配下（契約満了の選手は「育成契約満了」に出す）／ 支配下 → 育成
+    const rowsP = A['昇格'].filter(r => !r['満了']);
+    const rowsM = A['育成へ'];
 
     return [
       { key: 'd2f', mark: '①', title: '育成 → 自由契約', k: 'var(--color-bad)', n: cutD.length, sub: nextD.length ? `次点 ${nextD.length}人` : '',
         count: `戦力外 ${cutD.length}人` + (nextD.length ? `・次点 ${nextD.length}人` : ''), rows: cutD.concat(nextD, keepD),
         desc: '育成の戦力外のうち、契約満了ではない選手。「次点」は今回の人数には入らなかった候補です。例外リストの選手は「残留（検証中）」。 ' + R['説明'],
         empty: c.dev.need <= 0 ? '戦力外は不要です（育成に空きがあります）。' : '該当する選手はいません。' },
-      { key: 'c2f', mark: '②', title: '支配下 → 自由契約', k: 'var(--color-bad)', n: cutR.length, sub: nextR.length ? `次点 ${nextR.length}人` : '',
-        count: `戦力外 ${cutR.length}人` + (nextR.length ? `・次点 ${nextR.length}人` : ''), rows: cutR.concat(nextR), desc: R['説明'],
-        empty: c.reg.need <= 0 ? '戦力外は不要です（支配下に空きがあります）。' : '候補がいません（総合80以上の見込みがある選手だけです）。' },
+      { key: 'c2f', mark: '②', title: '支配下 → 自由契約', k: 'var(--color-bad)', n: cutR.length,
+        sub: [nextR.length ? `次点 ${nextR.length}人` : '', keepR.length ? `確保 ${keepR.length}人` : ''].filter(Boolean).join('・'),
+        count: `戦力外 ${cutR.length}人` + (nextR.length ? `・次点 ${nextR.length}人` : '') + (keepR.length ? `・ポジション確保 ${keepR.length}人` : ''),
+        rows: cutR.concat(nextR, keepR), desc: (D['支配下'] || '') + '「次点」は当落線のすぐ上にいる選手、「残留（ポジション確保）」は総合では枠外だがポジションの最低人数のために残す選手です。',
+        empty: '枠から外れて自由契約になる選手はいません。' },
       { key: 'exp', mark: '③', title: '育成契約満了', k: 'var(--color-warn)', n: rowsE.length, sub: rowsE.length ? `支配下${nE('支配下')}・再契約${nE('育成再契約')}・自由契約${nE('自由契約')}` : '',
         count: `${rowsE.length}人（支配下 ${nE('支配下')}・育成再契約 ${nE('育成再契約')}・自由契約 ${nE('自由契約')}）`, rows: rowsE, desc: l5['説明'],
         empty: '今オフに契約が満了する育成選手はいません。' },
-      { key: 'd2c', mark: '④', title: '育成 → 支配下', k: 'var(--color-ok)', n: l3['行'].length, sub: '', count: `${l3['行'].length}人`, rows: l3['行'], desc: l3['説明'] },
-      { key: 'c2d', mark: '⑤', title: '支配下 → 育成', k: 'var(--s-new)', n: nMove, sub: rowsM.length > nMove ? `残留（例外）${rowsM.length - nMove}人` : '',
-        count: `${nMove}人` + (rowsM.length > nMove ? `・残留（例外）${rowsM.length - nMove}人` : ''), rows: rowsM, desc: l1['説明'] },
+      { key: 'd2c', mark: '④', title: '育成 → 支配下', k: 'var(--color-ok)', n: rowsP.length, sub: '', count: `${rowsP.length}人`, rows: rowsP, desc: D['昇格'] || '',
+        empty: '昇格の対象になる育成選手はいません。' },
+      { key: 'c2d', mark: '⑤', title: '支配下 → 育成', k: 'var(--s-new)', n: rowsM.length, sub: '', count: `${rowsM.length}人`, rows: rowsM, desc: D['育成へ'] || '',
+        empty: '育成へ切り替える選手はいません。' }
     ];
   }
   function drawPlanLists(c) {
@@ -556,18 +561,34 @@
     const c = planCalc();
     drawHeadcount(c);
     drawPlanLists(c);
-    try { localStorage.setItem('bp_picks', JSON.stringify(c.pk)); } catch (e) { /* 保存できなくても動く */ }
+    try { localStorage.setItem('bp_picks', JSON.stringify(Object.assign({ '目標': PLV.target }, c.pk))); } catch (e) { /* 保存できなくても動く */ }
   }
   function drawPlan() {
     const asof = $('plan_asof');
     if (!PLAN) { asof.textContent = '編成提案のデータ（data/roster_plan.json）がまだありません。セーブデータをアップロードすると自動で作られます。'; return; }
-    const tg = PLAN['人数']['目標'];
-    asof.textContent = `ゲーム内 ${PLAN['ゲーム内日付']}${PLAN['フェーズ'] ? '・' + PLAN['フェーズ'] : ''} のセーブデータから作成。ドラフト後に 支配下${tg['支配下']}人・育成${tg['育成']}人 になるように戦力外の人数を決めます。`;
+    const targets = (PLAN['支配下の目標'] || []).map(String);
+    PLV.target = String(PLAN['標準の目標']);
+    asof.textContent = `ゲーム内 ${PLAN['ゲーム内日付']}${PLAN['フェーズ'] ? '・' + PLAN['フェーズ'] : ''} のセーブデータから作成。支配下はドラフト前に目標の人数まで減らし、育成はドラフト後に${PLAN['人数']['育成の目標']}人になるように戦力外の人数を決めます。`;
     $('dpick').hidden = false;
     try {
       const saved = JSON.parse(localStorage.getItem('bp_picks') || 'null');
-      if (saved) { $('dp_reg').value = Number(saved['支配下']) || 0; $('dp_dev').value = Number(saved['育成']) || 0; }
+      if (saved) {
+        $('dp_reg').value = Number(saved['支配下']) || 0; $('dp_dev').value = Number(saved['育成']) || 0;
+        if (targets.includes(String(saved['目標']))) PLV.target = String(saved['目標']);
+      }
     } catch (e) { /* 無視 */ }
+    if (!PLAN['案'][PLV.target]) PLV.target = targets[targets.length - 1];
+    const chips = $('tg_chips'); chips.replaceChildren();
+    targets.forEach(tv => {
+      const b = el('button', 'chip', `${tv}人`); b.type = 'button'; b.dataset.tg = tv;
+      b.setAttribute('aria-pressed', String(tv === PLV.target));
+      b.addEventListener('click', () => {
+        PLV.target = tv;
+        chips.querySelectorAll('.chip').forEach(o => o.setAttribute('aria-pressed', String(o === b)));
+        refreshPlan();
+      });
+      chips.append(b);
+    });
     $('plan_legend').replaceChildren(...[['戦力外・自由契約', 'var(--color-bad)'], ['次点・育成再契約', 'var(--color-warn)'], ['昇格・支配下', 'var(--color-ok)'], ['育成へ', 'var(--s-new)'], ['例外・残留', 'var(--c7)']].map(([t, c]) => { const s = el('span'); s.style.setProperty('--k', c); s.append(el('i'), document.createTextNode(t)); return s; }));
     refreshPlan();
     $('plan_note').textContent = (PLAN['注意'] || '') + ' ドラフト候補は「ドラフト候補」タブにあります。';
@@ -836,7 +857,7 @@
       const [players, qa, meta, plan, draft] = await Promise.all([loadJson(PLAYERS_URL), loadJson(QA_URL).catch(() => []), loadJson(META_URL).catch(() => null), loadJson(PLAN_URL).catch(() => null), loadJson(DRAFT_URL).catch(() => null)]);
       if (!Array.isArray(players)) throw new Error('players.json の形式が違います（配列ではありません）');
       PLAYERS = players; QA = Array.isArray(qa) ? qa : []; META = meta && typeof meta === 'object' ? meta : null;
-      PLAN = plan && typeof plan === 'object' && plan['戦力外'] && plan['入れ替え'] && plan['人数'] ? plan : null;
+      PLAN = plan && typeof plan === 'object' && plan['戦力外'] && plan['案'] && plan['満了'] && plan['人数'] ? plan : null;
       DRAFT = draft && typeof draft === 'object' && Array.isArray(draft['候補']) ? draft : null;
       loadPicked();
     } catch (err) {

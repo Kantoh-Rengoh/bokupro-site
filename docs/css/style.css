@@ -393,3 +393,7 @@ button.tile { font: inherit; color: inherit; text-align: left; cursor: pointer; 
 .ptiles .tile .sub { font-size: .68rem; color: var(--color-fg-muted); line-height: 1.35; min-height: .95rem; }
 .ptiles .tile[aria-pressed="true"] { border-color: var(--k); background: linear-gradient(170deg, color-mix(in srgb, var(--k) 16%, #1a1a22), #121218); box-shadow: 0 0 0 1px var(--k), 0 10px 24px -14px rgba(0, 0, 0, .9); }
 .ptiles .tile .tapm { position: absolute; right: .6rem; top: .55rem; font-size: var(--fs-caption); color: var(--k); }
+
+/* ---------- 編成提案：支配下の目標の切り替え ---------- */
+.dpick { display: flex; flex-direction: column; gap: .45rem; }
+.chip[data-tg] { --k: var(--gold); min-width: 3.2rem; }
