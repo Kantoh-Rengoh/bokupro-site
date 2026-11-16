@@ -35,7 +35,8 @@
   let META = null;      // 更新情報（meta.json、無くても動く）
   let PLAN = null;      // オフの編成提案（data/roster_plan.json、無くても動く）
   let DRAFT = null;     // ドラフト候補（draft.json、無くても動く）
-  const DF = { role: '', grade: '', attn: '', sort: '予測最大', dir: -1, q: '', open: new Set() };
+  const DF = { role: '', grade: '', attn: '', sort: '予測最大', dir: -1, q: '', open: new Set(), picked: new Set(), frames: {}, rec: {} };
+  const PLV = { open: '' };   // 編成提案で開いている枠（空なら全部閉じている）
   const LOT_VAR = { '高': 'var(--color-bad)', '中': 'var(--color-warn)', '低': 'var(--color-ok)' };
   const FRAME_VAR = { '1位候補': 'var(--gold)', '狙い目': 'var(--s-grow)', '育成候補': 'var(--s-new)' };
   // 判定の色（推奨＝赤系、検討＝黄系、昇格＝緑系、例外＝灰色、育成へ＝青系）
@@ -431,37 +432,6 @@
     t.append(tb);
     return t;
   }
-  function draftTable(rows) {
-    const t = el('table', 'ptab dtab');
-    const th = el('thead'); const hr = el('tr');
-    ['選手', '年齢', 'ポジ', '経歴', '総合', '予測最大', '注目度', '関心数', '1位候補', '推奨'].forEach(h => hr.append(el('th', null, h)));
-    th.append(hr); t.append(th);
-    const tb = el('tbody');
-    for (const r of rows) {
-      const tr = el('tr' ); if (r['対象外']) tr.classList.add('dim');
-      tr.style.setProperty('--k', r['推奨'] ? JD_VAR[r['推奨']] : r['対象外'] ? 'var(--c7)' : 'var(--p-p)');
-      const marks = [];
-      if (r['同姓']) { const m = el('span', 'mk', '同姓あり'); m.title = String(r['同姓']); marks.push(m); }
-      if (r['公言']) { const m = el('span', 'mk', '1位公言あり'); m.title = String(r['公言']) + ' が1位指名を公言'; m.style.color = 'var(--c6)'; m.style.borderColor = 'var(--c6)'; marks.push(m); }
-      cell(tr, '選手', nameCell(r, marks), 'nm');
-      numCell(tr, '年齢', r['年齢']);
-      cell(tr, 'ポジ', posMark(r['ポジ']));
-      cell(tr, '経歴', r['経歴']);
-      numCell(tr, '総合', r['総合']);
-      numCell(tr, '予測最大', r['予測最大'], 'pm');
-      const g = el('span', 'grd', String(r['注目度'] || '-')); g.style.setProperty('--k', GR_VAR[r['注目度']] || 'var(--c7)');
-      cell(tr, '注目度', g);
-      numCell(tr, '関心数', r['関心数']);
-      numCell(tr, '1位候補', r['1位候補数']);
-      const jd = el('span');
-      if (r['推奨']) jd.append(jdPill(r['推奨'])); else if (r['対象外']) jd.append(el('small', null, '対象外（予測最大が低い）')); else jd.textContent = '';
-      cell(tr, '推奨', jd, 'jd');
-      if (r['同姓']) { const s = el('small', null, '同姓の候補：' + String(r['同姓'])); cell(tr, '', s, 'rs'); }
-      tb.append(tr);
-    }
-    t.append(tb);
-    return t;
-  }
   // ドラフトの指名人数（入力欄）
   function planPicks() {
     const n = (id) => Math.max(0, Math.min(30, Math.floor(Number($(id).value) || 0)));
@@ -521,47 +491,66 @@
     if (rows.length) sec.append(playerTable(rows)); else sec.append(el('div', 'none', emptyText || '該当する選手はいません。'));
     return sec;
   }
-  function drawPlanLists(c) {
+  // 5つの枠の中身を作る（順番：育成→自由契約、支配下→自由契約、育成契約満了、育成→支配下、支配下→育成）
+  function planBlocks(c) {
     const X = PLAN['入れ替え'], R = PLAN['戦力外'], nextN = Number(R['次点の人数']) || 5;
     const mark = (r, jd, why) => Object.assign({}, r, { '判定': jd, '理由': why === undefined ? r['理由'] : why });
     const cutDev = new Set(c.dev.cut.map(r => r['id']));
     const devRank = {}; (R['育成'] || []).forEach(r => { devRank[r['id']] = r; });
-    const lists = $('plan_lists'); lists.replaceChildren();
 
-    // 1. 支配下 → 育成（育成へ移した後に戦力外になった選手は 2 へ）
-    const l1 = X['支配下→育成'];
-    const rows1 = l1['行'].filter(r => !cutDev.has(r['id']));
-    lists.append(planSection(1, l1['題'], `${rows1.length}人`, l1['説明'], rows1));
-
-    // 2. 支配下 → 自由契約
+    // 育成 → 自由契約（契約満了の選手は「育成契約満了」、支配下2年目の選手は「支配下 → 自由契約」に出す）
+    const cutD = c.dev.cut.filter(r => !r['満了'] && !r['元']).map(r => mark(r, '戦力外'));
+    const nextD = c.dev.next.filter(r => !r['満了'] && !r['元']).slice(0, nextN).map(r => mark(r, '次点'));
+    const keepD = (R['例外'] || []).filter(r => !r['満了']);
+    // 支配下 → 自由契約
     const movers = c.dev.cut.filter(r => r['元']).map(r => mark(r, '戦力外', `${r['理由']}（${r['元']}）`));
-    const rows2 = c.reg.cut.map(r => mark(r, '戦力外')).concat(movers);
-    const next2 = c.reg.next.slice(0, nextN).map(r => mark(r, '次点'));
-    lists.append(planSection(2, '支配下 → 自由契約', `戦力外 ${rows2.length}人` + (next2.length ? `・次点 ${next2.length}人` : ''), R['説明'], rows2.concat(next2),
-      c.reg.need <= 0 ? '戦力外は不要です（支配下に空きがあります）。' : '候補がいません（総合80以上の見込みがある選手だけです）。'));
-
-    // 3. 育成 → 支配下
-    const l3 = X['育成→支配下'];
-    lists.append(planSection(3, l3['題'], `${l3['行'].length}人`, l3['説明'], l3['行']));
-
-    // 4. 育成 → 自由契約（契約満了の選手は 5、支配下2年目の選手は 2 に出す）
-    const rows4 = c.dev.cut.filter(r => !r['満了'] && !r['元']).map(r => mark(r, '戦力外'));
-    const next4 = c.dev.next.filter(r => !r['満了'] && !r['元']).slice(0, nextN).map(r => mark(r, '次点'));
-    const keep4 = (R['例外'] || []).filter(r => !r['満了']);
-    lists.append(planSection(4, '育成 → 自由契約', `戦力外 ${rows4.length}人` + (next4.length ? `・次点 ${next4.length}人` : ''),
-      '育成の戦力外のうち、契約満了ではない選手。「次点」は今回の人数には入らなかった候補です。例外リストの選手は「残留（検証中）」。', rows4.concat(next4, keep4),
-      c.dev.need <= 0 ? '戦力外は不要です（育成に空きがあります）。' : '該当する選手はいません。'));
-
-    // 5. 育成契約満了
+    const cutR = c.reg.cut.map(r => mark(r, '戦力外')).concat(movers);
+    const nextR = c.reg.next.slice(0, nextN).map(r => mark(r, '次点'));
+    // 育成契約満了
     const l5 = X['満了'];
-    const rows5 = l5['行'].map(r => {
+    const rowsE = l5['行'].map(r => {
       if (r['判定'] === '支配下') return r;
       if (cutDev.has(r['id'])) return mark(r, '自由契約', devRank[r['id']] ? devRank[r['id']]['理由'] : r['理由']);
       return mark(r, '育成再契約', devRank[r['id']] ? `候補だが今回の人数には入らず（${devRank[r['id']]['理由']}）` : r['理由']);
     });
-    const n5 = (jd) => rows5.filter(r => r['判定'] === jd).length;
-    lists.append(planSection(5, l5['題'], `${rows5.length}人（支配下 ${n5('支配下')}・育成再契約 ${n5('育成再契約')}・自由契約 ${n5('自由契約')}）`, l5['説明'], rows5,
-      '今オフに契約が満了する育成選手はいません。'));
+    const nE = (jd) => rowsE.filter(r => r['判定'] === jd).length;
+    // 育成 → 支配下 ／ 支配下 → 育成（育成へ移した後に戦力外になった選手は「支配下 → 自由契約」へ）
+    const l3 = X['育成→支配下'], l1 = X['支配下→育成'];
+    const rowsM = l1['行'].filter(r => !cutDev.has(r['id']));
+    const nMove = rowsM.filter(r => r['判定'] === '育成へ').length;
+
+    return [
+      { key: 'd2f', mark: '①', title: '育成 → 自由契約', k: 'var(--color-bad)', n: cutD.length, sub: nextD.length ? `次点 ${nextD.length}人` : '',
+        count: `戦力外 ${cutD.length}人` + (nextD.length ? `・次点 ${nextD.length}人` : ''), rows: cutD.concat(nextD, keepD),
+        desc: '育成の戦力外のうち、契約満了ではない選手。「次点」は今回の人数には入らなかった候補です。例外リストの選手は「残留（検証中）」。 ' + R['説明'],
+        empty: c.dev.need <= 0 ? '戦力外は不要です（育成に空きがあります）。' : '該当する選手はいません。' },
+      { key: 'c2f', mark: '②', title: '支配下 → 自由契約', k: 'var(--color-bad)', n: cutR.length, sub: nextR.length ? `次点 ${nextR.length}人` : '',
+        count: `戦力外 ${cutR.length}人` + (nextR.length ? `・次点 ${nextR.length}人` : ''), rows: cutR.concat(nextR), desc: R['説明'],
+        empty: c.reg.need <= 0 ? '戦力外は不要です（支配下に空きがあります）。' : '候補がいません（総合80以上の見込みがある選手だけです）。' },
+      { key: 'exp', mark: '③', title: '育成契約満了', k: 'var(--color-warn)', n: rowsE.length, sub: rowsE.length ? `支配下${nE('支配下')}・再契約${nE('育成再契約')}・自由契約${nE('自由契約')}` : '',
+        count: `${rowsE.length}人（支配下 ${nE('支配下')}・育成再契約 ${nE('育成再契約')}・自由契約 ${nE('自由契約')}）`, rows: rowsE, desc: l5['説明'],
+        empty: '今オフに契約が満了する育成選手はいません。' },
+      { key: 'd2c', mark: '④', title: '育成 → 支配下', k: 'var(--color-ok)', n: l3['行'].length, sub: '', count: `${l3['行'].length}人`, rows: l3['行'], desc: l3['説明'] },
+      { key: 'c2d', mark: '⑤', title: '支配下 → 育成', k: 'var(--s-new)', n: nMove, sub: rowsM.length > nMove ? `残留（例外）${rowsM.length - nMove}人` : '',
+        count: `${nMove}人` + (rowsM.length > nMove ? `・残留（例外）${rowsM.length - nMove}人` : ''), rows: rowsM, desc: l1['説明'] },
+    ];
+  }
+  function drawPlanLists(c) {
+    const blocks = planBlocks(c);
+    const tiles = $('plan_tiles'); tiles.replaceChildren();
+    blocks.forEach(b => {
+      const on = PLV.open === b.key;
+      const t = el('button', 'tile'); t.type = 'button'; t.style.setProperty('--k', b.k);
+      t.setAttribute('aria-pressed', String(on));
+      const num = el('div', 'num'); num.append(el('span', null, String(b.n)), el('span', 'unit', '人'));
+      t.append(el('div', 'lab', `${b.mark} ${b.title}`), num, el('div', 'sub', b.sub), el('span', 'tapm', on ? '▴' : '▾'));
+      t.addEventListener('click', () => { PLV.open = on ? '' : b.key; drawPlanLists(planCalc()); });
+      tiles.append(t);
+    });
+    const lists = $('plan_lists'); lists.replaceChildren();
+    const b = blocks.find(x => x.key === PLV.open);
+    if (!b) { lists.append(el('div', 'count', '上の5つの枠をタップすると、その一覧が開きます。')); return; }
+    lists.append(planSection(blocks.indexOf(b) + 1, b.title, b.count, b.desc, b.rows, b.empty));
   }
   function refreshPlan() {
     const c = planCalc();
@@ -581,21 +570,25 @@
     } catch (e) { /* 無視 */ }
     $('plan_legend').replaceChildren(...[['戦力外・自由契約', 'var(--color-bad)'], ['次点・育成再契約', 'var(--color-warn)'], ['昇格・支配下', 'var(--color-ok)'], ['育成へ', 'var(--s-new)'], ['例外・残留', 'var(--c7)']].map(([t, c]) => { const s = el('span'); s.style.setProperty('--k', c); s.append(el('i'), document.createTextNode(t)); return s; }));
     refreshPlan();
-    const D = PLAN['ドラフト'] || {}; const box = $('dft'); box.replaceChildren();
-    const sec = el('div', 'pls');
-    const h = el('h3'); h.append(el('span', 'no', '6'), document.createTextNode(`ドラフト候補（${(D['対象の経歴'] || ['高卒']).join('・')}で将来性A）`), el('span', 'cnt', `${(D['候補'] || []).length}人／全候補 ${D['候補数'] || 0}人`)); sec.append(h);
-    sec.append(el('p', 'desc', `他球団（${D['他球団数'] || 0}球団）の関心一覧から「関心数」と「1位候補にしている球団数」を数えています。予測最大が低い候補は薄く表示。1位の推奨は、1位候補にしている球団が少ない候補の中で予測最大が最も高い選手と、その抽選に外れた場合の次点です。`));
-    if (D['推奨'] && D['推奨']['文']) { const r = el('div', 'rec'); r.append(el('span', 'rl', '1位指名の推奨'), document.createTextNode(String(D['推奨']['文']))); sec.append(r); }
-    if (D['公言'] && D['公言']['球団']) { const d = el('div', 'decl'); d.append(document.createTextNode('1位指名の公言：'), el('b', null, String(D['公言']['球団'])), document.createTextNode(' → '), el('b', null, String(D['公言']['選手'] || '?'))); sec.append(d); }
-    if ((D['候補'] || []).length) sec.append(draftTable(D['候補'])); else sec.append(el('div', 'none', D['段階'] && D['段階'] !== 'scheduled' ? '今はドラフト候補の時期ではありません（ドラフト後のセーブデータ）。' : 'ドラフト候補のデータがありません。'));
-    box.append(sec);
-    $('plan_note').textContent = (PLAN['注意'] || '') + (D['予測誤差'] ? ` ドラフト候補の予測誤差（平均）：±${D['予測誤差']}。` : '');
+    $('plan_note').textContent = (PLAN['注意'] || '') + ' ドラフト候補は「ドラフト候補」タブにあります。';
     ['dp_reg', 'dp_dev'].forEach(id => $(id).addEventListener('input', refreshPlan));
   }
 
   // ---------- ドラフト候補タブ ----------
+  // 指名済（どの球団でも、指名された候補）。ドラフト年ごとに、この端末に保存する
+  function pickedKey() { return 'bp_picked_' + String((DRAFT && DRAFT['ドラフト年']) || ''); }
+  function loadPicked() {
+    try { DF.picked = new Set(JSON.parse(localStorage.getItem(pickedKey()) || '[]')); } catch (e) { DF.picked = new Set(); }
+  }
+  function savePicked() {
+    try { localStorage.setItem(pickedKey(), JSON.stringify([...DF.picked])); } catch (e) { /* 保存できなくても動く */ }
+  }
+  function togglePicked(id) {
+    if (DF.picked.has(id)) DF.picked.delete(id); else { DF.picked.add(id); DF.open.delete(id); }
+    savePicked(); drawDraft();
+  }
   function prospectItem(r, frameName) {
-    const id = r['id'], open = DF.open.has(id);
+    const id = r['id'], open = DF.open.has(id), picked = DF.picked.has(id);
     const item = el('div', 'pl' + (open ? ' open' : '') + (r['対象外'] ? ' dim' : ''));
     item.style.setProperty('--k', frameName ? (FRAME_VAR[frameName] || 'var(--gold)') : (POS_C[r['ポジ']] || 'var(--c7)'));
     const head = el('button', 'plh'); head.type = 'button';
@@ -612,13 +605,21 @@
     const lot = el('span', 'lot', `抽選${r['抽選']}・${r['関心数']}球団`); lot.style.setProperty('--k', LOT_VAR[r['抽選']] || 'var(--c7)');
     head.append(nm, pw, g, sr, lot, ov, el('span', 'ag', String(r['年齢']) + '歳'), el('span', 'chev', open ? '▴' : '▾'));
     head.addEventListener('click', () => { if (DF.open.has(id)) DF.open.delete(id); else DF.open.add(id); drawDraft(); });
-    item.append(head);
+    const pk = el('button', 'pick'); pk.type = 'button';
+    pk.setAttribute('aria-pressed', String(picked));
+    pk.setAttribute('aria-label', picked ? `${r['名前']} を候補に戻す` : `${r['名前']} を指名済にする`);
+    pk.title = picked ? '候補に戻す' : '指名済にする';
+    pk.append(el('i', null, picked ? '✓' : ''));
+    pk.addEventListener('click', () => togglePicked(id));
+    const row = el('div', 'plrow'); row.append(pk, head);
+    item.append(row);
     if (!open) return item;
 
     const d = el('div', 'pld');
     const tags = el('div', 'tags');
-    (r['枠'] || []).forEach(f => { const pl = el('span', 'pill', f); pl.style.setProperty('--k', FRAME_VAR[f] || 'var(--gold)'); tags.append(pl); });
-    if (r['推奨']) tags.append(jdPill(r['推奨']));
+    if (picked) { const pl = el('span', 'pill', '指名済'); pl.style.setProperty('--k', 'var(--c7)'); tags.append(pl); }
+    (DF.frames[id] || []).forEach(f => { const pl = el('span', 'pill', f); pl.style.setProperty('--k', FRAME_VAR[f] || 'var(--gold)'); tags.append(pl); });
+    if (DF.rec[id]) tags.append(jdPill(DF.rec[id]));
     tags.append(gradeTag('将来性', r['将来性']), gradeTag('注目度', r['注目度']));
     tags.append(el('span', 'tag', `${r['経歴']}${r['出身'] ? '・' + r['出身'] : ''}`));
     if (r['利き']) tags.append(el('span', 'tag', String(r['利き'])));
@@ -667,9 +668,36 @@
     item.append(d);
     return item;
   }
-  function draftFiltered() {
+  // 3つの枠を、指名済を除いた候補から作る（指名されたら次の候補が繰り上がる）
+  function draftFrames(rest) {
+    const c = DRAFT['枠の条件'];
+    const byPm = (a, b) => (num(b['予測最大']) - num(a['予測最大'])) || (num(b['総合']) - num(a['総合']));
+    if (!c) {   // 条件が入っていない古いデータ：書き出し済みの枠から指名済を除くだけ
+      const byId = {}; rest.forEach(r => { byId[r['id']] = r; });
+      const out = {}; ['1位候補', '狙い目', '育成候補'].forEach(n => { out[n] = (((DRAFT['枠'] || {})[n]) || []).map(i => byId[i]).filter(Boolean); });
+      return out;
+    }
+    const n = Number(c['人数']) || 8;
+    const ok = rest.filter(r => !r['対象外']).sort(byPm);
+    return {
+      '1位候補': ok.slice(0, n),
+      '狙い目': ok.filter(r => num(r['関心数']) <= Number(c['狙い目の関心数'])).slice(0, n),
+      '育成候補': rest.filter(r => num(r['スカウト順位']) >= Number(c['育成の順位']) && num(r['予測最大']) >= Number(c['育成の予測最大'])).sort(byPm).slice(0, n)
+    };
+  }
+  // 1位指名の推奨（1位候補にしている球団が少ない候補の中で予測最大が最も高い選手と、その次点）
+  function draftRec(rest) {
+    const c = DRAFT['枠の条件']; if (!c) return [];
+    const grades = c['1位推奨の将来性'] || ['A'];
+    const pool = rest.filter(r => !r['対象外'] && grades.includes(r['将来性']));
+    let few = pool.filter(r => num(r['1位候補数']) <= Number(c['1位推奨の1位候補数']));
+    if (few.length < 2) few = pool;
+    few.sort((a, b) => (num(b['予測最大']) - num(a['予測最大'])) || (num(b['総合']) - num(a['総合'])) || (num(a['1位候補数']) - num(b['1位候補数'])));
+    return few.slice(0, 2);
+  }
+  function draftFiltered(base) {
     const q = DF.q.trim();
-    const rows = (DRAFT['候補'] || []).filter(r =>
+    const rows = base.filter(r =>
       (!DF.role || (DF.role === '二刀流' ? !!r['二刀流'] : r['役割'] === DF.role)) &&
       (!DF.grade || (DF.grade === 'D' ? ['D', 'E', '-'].includes(String(r['将来性'])) : r['将来性'] === DF.grade)) &&
       (!DF.attn || (DF.attn === 'D' ? ['D', 'E', '-'].includes(String(r['注目度'])) : r['注目度'] === DF.attn)) &&
@@ -701,26 +729,45 @@
       if (DRAFT['補強方針のまとめ']) nd.append(el('div', 'nc', String(DRAFT['補強方針のまとめ'])));
     }
     if (DRAFT['公言'] && DRAFT['公言']['球団']) { const dcl = el('div', 'ni'); dcl.append(el('b', null, '1位指名の公言'), el('span', 'nc', `${DRAFT['公言']['球団']} → ${DRAFT['公言']['選手'] || '?'}`)); nd.append(dcl); }
-    // 3つの枠
+    // 指名済を除いた候補で、推奨と3つの枠を作る
+    const all = DRAFT['候補'] || [];
+    const rest = all.filter(r => !DF.picked.has(r['id']));
+    const byId = {}; all.forEach(r => { byId[r['id']] = r; });
+    const pickedRows = [...DF.picked].map(i => byId[i]).filter(Boolean).reverse();   // 新しく指名済にした順
+    const frames = draftFrames(rest);
+    DF.frames = {};
+    Object.keys(frames).forEach(name => frames[name].forEach(r => { (DF.frames[r['id']] = DF.frames[r['id']] || []).push(name); }));
+    const rec = draftRec(rest);
+    DF.rec = {}; if (rec[0]) DF.rec[rec[0]['id']] = '1位'; if (rec[1]) DF.rec[rec[1]['id']] = '外れ1位';
+    const rb = $('dft_rec'); rb.replaceChildren();
+    if (rec.length) {
+      const one = (r) => `${r['名前']}（${r['ポジ']}・予測最大${r['予測最大']}・1位候補にしている球団 ${r['1位候補数']}）`;
+      const box = el('div', 'rec');
+      box.append(el('span', 'rl', '1位指名の推奨'), document.createTextNode(`1位は${one(rec[0])}` + (rec[1] ? `。抽選に外れたら${one(rec[1])}` + (rec[1]['同姓'] ? '※同姓の候補あり' : '') : '') + '。'));
+      rb.append(box);
+    }
     const fr = $('dft_frames'); fr.replaceChildren();
-    const byId = {}; (DRAFT['候補'] || []).forEach(r => { byId[r['id']] = r; });
     for (const name of ['1位候補', '狙い目', '育成候補']) {
       const sec = el('div', 'frame'); sec.style.setProperty('--k', FRAME_VAR[name]);
       const h = el('div', 'fh'); h.append(el('span', 'ft', name), el('span', 'fd', String((DRAFT['枠の説明'] || {})[name] || ''))); sec.append(h);
-      const ids = (DRAFT['枠'] || {})[name] || [];
-      if (!ids.length) sec.append(el('div', 'none', '該当する候補はいません。'));
       const list = el('div', 'plist');
-      ids.map(i => byId[i]).filter(Boolean).forEach(r => list.append(prospectItem(r, name)));
+      if (!frames[name].length) sec.append(el('div', 'none', '該当する候補はいません。'));
+      frames[name].forEach(r => list.append(prospectItem(r, name)));
       sec.append(list); fr.append(sec);
     }
-    // 全候補
+    // 全候補（指名済は除く）
     $('dft_allwrap').hidden = false;
-    const rows = draftFiltered();
-    setText('dft_n', `表示中 ${rows.length} 人`);
+    const rows = draftFiltered(rest);
+    setText('dft_n', `表示中 ${rows.length} 人` + (pickedRows.length ? `・指名済 ${pickedRows.length} 人` : ''));
     const box = $('dft_rows'); box.replaceChildren();
     if (!rows.length) box.append(el('div', 'wait', '条件に合う候補がいません。'));
     rows.forEach(r => box.append(prospectItem(r, null)));
-    $('dft_note').textContent = (DRAFT['注意'] || '') + ' 「抽選」は興味を持つ球団数の目安（3球団以上＝高、1〜2＝中、0＝低）。1位候補にしている球団数は、各球団の関心一覧で先頭に置いている数です。';
+    // 指名済リスト
+    $('dft_pickedwrap').hidden = !pickedRows.length;
+    setText('dft_pn', `${pickedRows.length} 人`);
+    const pb = $('dft_picked'); pb.replaceChildren();
+    pickedRows.forEach(r => pb.append(prospectItem(r, null)));
+    $('dft_note').textContent = (DRAFT['注意'] || '') + ' 「抽選」は興味を持つ球団数の目安（3球団以上＝高、1〜2＝中、0＝低）。1位候補にしている球団数は、各球団の関心一覧で先頭に置いている数です。指名済にした候補は、推奨と3つの枠からも外れ、次の候補が繰り上がります。';
   }
   function setupDraftControls() {
     document.querySelectorAll('.chip[data-dgroup]').forEach(btn => btn.addEventListener('click', () => {
@@ -730,11 +777,25 @@
     }));
     $('dft_search').addEventListener('input', (e) => { DF.q = e.target.value; drawDraft(); });
     $('dft_sort').addEventListener('change', (e) => { DF.sort = e.target.value; drawDraft(); });
+    $('dft_unpick_all').addEventListener('click', () => {
+      if (!DF.picked.size || !window.confirm(`指名済の ${DF.picked.size} 人をすべて候補に戻しますか？`)) return;
+      DF.picked = new Set(); savePicked(); drawDraft();
+    });
+  }
+  // 検索欄の × ボタン（入力した文字を一度に消す）
+  function setupClearButtons() {
+    document.querySelectorAll('[data-clear]').forEach(btn => {
+      const input = $(btn.dataset.clear); if (!input) return;
+      const sync = () => { btn.hidden = !input.value; };
+      input.addEventListener('input', sync);
+      btn.addEventListener('click', () => { input.value = ''; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); });
+      sync();
+    });
   }
 
   // ---------- 操作イベント ----------
   function setupControls() {
-    document.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('.chip[data-group]').forEach(btn => btn.addEventListener('click', () => {
       const g = btn.dataset.group; BP[g] = g === 'dir' ? Number(btn.dataset.value) : btn.dataset.value;
       document.querySelectorAll(`.chip[data-group="${g}"]`).forEach(o => o.setAttribute('aria-pressed', String(o === btn)));
       drawRows();
@@ -769,6 +830,7 @@
   async function main() {
     setupControls();
     setupDraftControls();
+    setupClearButtons();
     setupTabs();
     try {
       const [players, qa, meta, plan, draft] = await Promise.all([loadJson(PLAYERS_URL), loadJson(QA_URL).catch(() => []), loadJson(META_URL).catch(() => null), loadJson(PLAN_URL).catch(() => null), loadJson(DRAFT_URL).catch(() => null)]);
@@ -776,6 +838,7 @@
       PLAYERS = players; QA = Array.isArray(qa) ? qa : []; META = meta && typeof meta === 'object' ? meta : null;
       PLAN = plan && typeof plan === 'object' && plan['戦力外'] && plan['入れ替え'] && plan['人数'] ? plan : null;
       DRAFT = draft && typeof draft === 'object' && Array.isArray(draft['候補']) ? draft : null;
+      loadPicked();
     } catch (err) {
       console.error(err);
       showError('データの読み込みに失敗しました: ' + err.message);

@@ -518,6 +518,8 @@ def build_plan(B, p0, own, rows, retired, ov_models, game_dt, out_path, draft_pa
         "補強方針のまとめ": draft_all["補強方針のまとめ"], "来年の候補数": draft_all["来年の候補数"],
         "予測誤差": pm[3], "候補数": draft_all["候補数"],
         "枠": frames,
+        "枠の条件": {"人数": DRAFT_TOP_N, "狙い目の関心数": DRAFT_SLEEPER_INTEREST, "育成の順位": DRAFT_DEV_RANK, "育成の予測最大": DRAFT_DEV_PMAX,
+                     "1位推奨の将来性": list(DRAFT_GRADES), "1位推奨の1位候補数": DRAFT_FEW_FIRST},
         "枠の説明": {"1位候補": "予測最大の高い順。興味を持つ球団が多いほど抽選になりやすい",
                      "狙い目": f"興味を持つ球団が{DRAFT_SLEEPER_INTEREST}以下で予測最大が高い順（2位以降で取れる見込み）",
                      "育成候補": f"スカウト順位{DRAFT_DEV_RANK}位以下だが予測最大{DRAFT_DEV_PMAX}以上"},

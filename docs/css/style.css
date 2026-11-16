@@ -368,3 +368,28 @@ h1 {
 
 /* 二刀流の絞り込みボタン（成長予測・ドラフト候補のポジション欄） */
 .chip[data-value="二刀流"] { --k: #ff9cc6; }
+
+/* ---------- 検索欄の一括削除ボタン ---------- */
+.srch { position: relative; }
+.srch .search { padding-right: 2.8rem; }
+.search::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+.sx { position: absolute; right: .3rem; top: 50%; transform: translateY(-50%); width: 2.2rem; height: 2.2rem; border-radius: 50%; border: 0; cursor: pointer; background: rgba(255, 255, 255, .12); color: var(--color-fg); font-size: 1.2rem; line-height: 1; display: flex; align-items: center; justify-content: center; padding: 0; }
+.sx[hidden] { display: none; }
+.sx:active { background: rgba(212, 175, 55, .4); }
+
+/* ---------- ドラフト候補：指名済のチェック ---------- */
+.plrow { display: flex; align-items: stretch; }
+.plrow .plh { flex: 1 1 0; min-width: 0; width: auto; }
+.pick { flex: none; width: 2.7rem; border: 0; background: none; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center; }
+.pick i { width: 1.45rem; height: 1.45rem; border-radius: 6px; border: 2px solid var(--gold-line); display: flex; align-items: center; justify-content: center; font-style: normal; font-weight: 800; font-size: .95rem; color: #0a0a0e; background: rgba(255, 255, 255, .03); }
+.pick[aria-pressed="true"] i { background: var(--gold); border-color: var(--gold); }
+.pkd { display: flex; flex-direction: column; gap: var(--gap-xs); margin-top: .9rem; padding-top: .7rem; border-top: 1px dashed rgba(212, 175, 55, .35); }
+.pkd .h3 .chip { margin-left: auto; }
+.pkd .pl { opacity: .75; }
+
+/* ---------- 編成提案：5つの枠（タップで一覧を開く） ---------- */
+button.tile { font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%; display: block; -webkit-appearance: none; appearance: none; }
+.ptiles .tile .lab { font-size: var(--fs-caption); font-weight: 700; color: var(--k); line-height: 1.35; padding-right: .9rem; }
+.ptiles .tile .sub { font-size: .68rem; color: var(--color-fg-muted); line-height: 1.35; min-height: .95rem; }
+.ptiles .tile[aria-pressed="true"] { border-color: var(--k); background: linear-gradient(170deg, color-mix(in srgb, var(--k) 16%, #1a1a22), #121218); box-shadow: 0 0 0 1px var(--k), 0 10px 24px -14px rgba(0, 0, 0, .9); }
+.ptiles .tile .tapm { position: absolute; right: .6rem; top: .55rem; font-size: var(--fs-caption); color: var(--k); }

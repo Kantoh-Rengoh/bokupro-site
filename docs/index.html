@@ -79,7 +79,10 @@
       <span class="lbl">ドラフト年</span>
       <select class="sel" id="dyear" aria-label="ドラフト年で絞り込み"></select>
     </div>
-    <input class="search" id="search" type="search" placeholder="名前・背番号で検索" aria-label="名前・背番号で検索" autocomplete="off">
+    <div class="srch">
+      <input class="search" id="search" type="search" placeholder="名前・背番号で検索" aria-label="名前・背番号で検索" autocomplete="off">
+      <button class="sx" type="button" data-clear="search" aria-label="検索の文字をすべて消す" hidden>×</button>
+    </div>
     <div class="count">表示中 <b id="shown">—</b> 人</div>
     <div class="ctl">
       <span class="lbl">並び順</span>
@@ -115,8 +118,8 @@
       <span class="count">人数を入れると、ドラフト後に支配下68人・育成80人になるように戦力外の人数が変わります</span>
     </div>
     <div class="legend" id="plan_legend"></div>
+    <div class="tiles ptiles" id="plan_tiles"></div>
     <div id="plan_lists"></div>
-    <div id="dft"></div>
     <p class="note" id="plan_note"></p>
   </section>
   </div>
@@ -126,6 +129,7 @@
     <h2>ドラフト候補 <span class="h2sub" id="dft_year"></span></h2>
     <div class="count" id="dft_asof">読み込んでいます…</div>
     <div class="needs" id="dft_needs"></div>
+    <div id="dft_rec"></div>
     <div id="dft_frames"></div>
     <div class="dftall" id="dft_allwrap" hidden>
       <h3 class="h3">候補の一覧 <span class="cnt" id="dft_n"></span></h3>
@@ -165,8 +169,17 @@
         <button class="chip" type="button" data-dgroup="dir" data-value="-1" aria-pressed="true">高い順</button>
         <button class="chip" type="button" data-dgroup="dir" data-value="1" aria-pressed="false">低い順</button>
       </div>
-      <input class="search" id="dft_search" type="search" placeholder="名前で検索" aria-label="候補を名前で検索" autocomplete="off">
+      <div class="srch">
+        <input class="search" id="dft_search" type="search" placeholder="名前で検索" aria-label="候補を名前で検索" autocomplete="off">
+        <button class="sx" type="button" data-clear="dft_search" aria-label="検索の文字をすべて消す" hidden>×</button>
+      </div>
+      <div class="count">名前の左の □ をタップすると「指名済」になり、候補の一覧から消えます（下の指名済リストに入ります）。</div>
       <div class="plist" id="dft_rows"></div>
+      <div class="pkd" id="dft_pickedwrap" hidden>
+        <h3 class="h3">指名済リスト <span class="cnt" id="dft_pn"></span><button class="chip" type="button" id="dft_unpick_all">すべて候補に戻す</button></h3>
+        <div class="count">チェックをタップすると候補の一覧に戻ります。指名済の記録はこの端末に保存されます。</div>
+        <div class="plist" id="dft_picked"></div>
+      </div>
     </div>
     <p class="note" id="dft_note"></p>
   </section>
