@@ -48,5 +48,15 @@ jobs:
             echo "変更なし（前回と同じ結果）"
           else
             git commit -m "セーブデータからサイトを更新 [skip ci]"
+            # 計算中（約5分）に別のアップロードが入ると、そのままでは送り返せない。
+            # 最新の状態を取り込んでから送り直す（3回まで）。
+            for n in 1 2 3; do
+              if git push; then
+                exit 0
+              fi
+              echo "送り返せなかったので、最新の状態を取り込んでやり直します（${n}回目）"
+              git pull --rebase
+              sleep 5
+            done
             git push
           fi
