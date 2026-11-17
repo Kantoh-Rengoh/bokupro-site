@@ -16,7 +16,10 @@ build.py から呼ばれ、次の2つを書き出す。
       - ポジションごとの最低人数を割るときは、そのポジションの選手を残して別の選手を外す
       - 枠から外れた支配下選手は、24歳以下または伸びしろ5以上なら「育成へ」、それ以外は「自由契約」
   ・育成は、ドラフト後に 80人 になるように戦力外の人数を決める（育成の指名人数はページで入力）
-      候補は予測最大80未満の選手だけ。①25歳以上で総合80未満 ②24歳で75未満 ③23歳で70未満 ④それ以外 の順
+      - プロ1〜2年目の育成選手は自由契約にできないので、候補に入れない
+      - 候補は「予測最大80未満」の選手と「25歳以上で予測最大85以下」の選手
+        ①25歳以上で総合80未満 ②25歳以上で予測最大85以下 ③24歳で75未満 ④23歳で70未満 ⑤それ以外 の順
+  ・育成契約満了の一覧だけは、今の総合の高い順に並べる
   ・一覧: 育成→自由契約 ／ 支配下→自由契約 ／ 育成契約満了 ／ 育成→支配下 ／ 支配下→育成
 """
 import json
@@ -43,13 +46,18 @@ TO_DEV_MIN_UPSIDE = 5          # 伸びしろ（予測最大 − 総合）がこ
                                # （下降期・外国人・予測最大が RELEASE_SAFE_PMAX 未満の選手は、条件に関係なく自由契約）
 
 # 育成の戦力外（自由契約）の候補と優先順位
-RELEASE_SAFE_PMAX = 80         # 予測最大がこれ以上（総合80以上の見込みあり）の選手は候補にしない
-RELEASE_TIERS = (              # (段階, 年齢の下限, 年齢の上限, 総合がこれ未満)。上から順に優先して戦力外にする
+RELEASE_LOCK_YEARS_PRO = 2     # プロ n 年目までの育成選手は自由契約にできない（候補に入れない）
+RELEASE_SAFE_PMAX = 80         # 予測最大がこれ以上（総合80以上の見込みあり）の選手は候補にしない（下の ② は例外）
+RELEASE_TIERS = (              # (段階, 年齢の下限, 年齢の上限, 総合がこれ未満)。段階の小さい順に優先して戦力外にする
     (1, 25, 99, 80),           # ① 25歳以上で総合80未満
-    (2, 24, 24, 75),           # ② 24歳で総合75未満
-    (3, 23, 23, 70),           # ③ 23歳で総合70未満
-)                              # ④ 上のどれでもないが予測最大が RELEASE_SAFE_PMAX 未満
-RELEASE_BORDER = 2             # 予測最大が「RELEASE_SAFE_PMAX − この値」以上の候補には「境界」の印（予測の誤差で入れ替わりうる）
+    (3, 24, 24, 75),           # ③ 24歳で総合75未満
+    (4, 23, 23, 70),           # ④ 23歳で総合70未満
+)                              # ⑤ 上のどれでもないが予測最大が RELEASE_SAFE_PMAX 未満
+RELEASE_OLD_AGE = 25           # ② この年齢以上で…
+RELEASE_OLD_PMAX = 85          # …予測最大がこれ以下の選手は、総合80以上の見込みがあっても候補にする
+RELEASE_OLD_TIER = 2           # ② の優先順位（① の次）
+RELEASE_LAST_TIER = 5          # ⑤ の優先順位
+RELEASE_BORDER = 2             # 予測最大が基準のすぐ下（基準 − この値 まで）の候補には「境界」の印（予測の誤差で入れ替わりうる）
 RELEASE_NEXT_SHOW = 5          # 次点として見せる人数
 # 戦力外にしない例外（ID で指定）
 D2F_KEEP_IDS = {
@@ -136,18 +144,28 @@ def predict_prospect(pm, ov_models, role, ab6, age, grade, attention, dev_pot, g
 # ======================================================================
 # 在籍選手の判定
 # ======================================================================
-TIER_MARK = {1: "①", 2: "②", 3: "③", 4: "④"}
+TIER_MARK = {1: "①", 2: "②", 3: "③", 4: "④", 5: "⑤"}
 
 
 def release_tier(age, overall, pmax):
-    """育成の戦力外候補の段階（1〜4）と説明。候補でなければ (None, "")"""
-    if pmax >= RELEASE_SAFE_PMAX:
-        return None, ""
-    for tier, lo, hi, need in RELEASE_TIERS:
-        if lo <= age <= hi and overall < need:
-            who = f"{lo}歳以上" if hi >= 99 else f"{lo}歳"
-            return tier, f"{TIER_MARK[tier]}{who}で総合{need}未満"
-    return 4, f"④予測最大{RELEASE_SAFE_PMAX}未満"
+    """育成の戦力外候補の段階（1〜5）と説明。候補でなければ (None, "")"""
+    if pmax < RELEASE_SAFE_PMAX:
+        for tier, lo, hi, need in RELEASE_TIERS:
+            if lo <= age <= hi and overall < need:
+                who = f"{lo}歳以上" if hi >= 99 else f"{lo}歳"
+                return tier, f"{TIER_MARK[tier]}{who}で総合{need}未満"
+    if age >= RELEASE_OLD_AGE and pmax <= RELEASE_OLD_PMAX:
+        return RELEASE_OLD_TIER, f"{TIER_MARK[RELEASE_OLD_TIER]}{RELEASE_OLD_AGE}歳以上で予測最大{RELEASE_OLD_PMAX}以下"
+    if pmax < RELEASE_SAFE_PMAX:
+        return RELEASE_LAST_TIER, f"{TIER_MARK[RELEASE_LAST_TIER]}予測最大{RELEASE_SAFE_PMAX}未満"
+    return None, ""
+
+
+def release_border(tier, pmax):
+    """予測最大が基準のすぐ下（誤差で候補から外れうる）か"""
+    if tier == RELEASE_OLD_TIER:
+        return pmax > RELEASE_OLD_PMAX - RELEASE_BORDER
+    return pmax >= RELEASE_SAFE_PMAX - RELEASE_BORDER
 
 
 def _row_base(r, p):
@@ -238,6 +256,7 @@ def classify_players(rows, expiry_ids, B):
     """rows は build.compute_players の結果（_fut, _p 付き）。
     戻り値: dict(案{目標: registered_plan の結果}, 満了, 候補（育成の戦力外・順位付き）, 例外, 現在{支配下, 育成})"""
     regs, devs, exp, keep, cand = [], [], [], [], []
+    locked = 0
     for r in rows:
         p = r["_p"]
         b = _row_base(r, p)
@@ -248,8 +267,13 @@ def classify_players(rows, expiry_ids, B):
         devs.append(b)
         tier, tier_text = release_tier(b["年齢"], b["総合"], b["予測最大"])
         in_keep = r["id"] in D2F_KEEP_IDS
+        # プロ1〜2年目の育成選手は自由契約にできない（年目が分からない選手は対象外にしない）
+        is_locked = 1 <= (b["年目"] or 0) <= RELEASE_LOCK_YEARS_PRO
+        if is_locked:
+            locked += 1
+            tier, tier_text = None, f"プロ{b['年目']}年目（{RELEASE_LOCK_YEARS_PRO}年目までは自由契約にできない）"
         if b["満了"]:
-            why = "例外リスト（検証中のため残す）" if in_keep else (tier_text if tier else f"予測最大{RELEASE_SAFE_PMAX}以上の見込み")
+            why = "例外リスト（検証中のため残す）" if in_keep else (tier_text if tier or is_locked else "戦力外の基準に当てはまらない")
             exp.append(_mark(b, "", why))
         if tier is None:
             continue
@@ -258,14 +282,16 @@ def classify_players(rows, expiry_ids, B):
             continue
         c = _mark(b, "", tier_text)
         c["段階"] = tier
-        c["境界"] = b["予測最大"] >= RELEASE_SAFE_PMAX - RELEASE_BORDER
+        c["境界"] = release_border(tier, b["予測最大"])
         cand.append(c)
-    # 段階（①→④）→ 予測最大の低い順 → 総合の低い順 → 年齢の高い順
+    # 段階（①→⑤）→ 予測最大の低い順 → 総合の低い順 → 年齢の高い順
     cand.sort(key=lambda x: (x["段階"], x["予測最大"], x["総合"], -x["年齢"]))
     for i, c in enumerate(cand):
         c["順"] = i + 1
     plans = {str(t): registered_plan(regs, devs, t) for t in TARGET_REGISTERED_PRE_DRAFT}
-    return {"案": plans, "満了": _sort_rows(exp), "候補": cand, "例外": _sort_rows(keep),
+    # 育成契約満了だけは、今の総合の高い順に並べる
+    exp.sort(key=lambda x: (-x["総合"], -x["予測最大"], x["年齢"]))
+    return {"案": plans, "満了": exp, "候補": cand, "例外": _sort_rows(keep), "育成の固定": locked,
             "現在": {"支配下": len(regs), "育成": len(devs)}}
 
 
@@ -472,19 +498,27 @@ def headcount(cls):
 def plan_core(rows, expiry_ids, B):
     """編成提案の本体（予測モデルを使わない部分）。roster_plan.json の中身のうち、選手の振り分けを返す"""
     cls = classify_players(rows, expiry_ids, B)
-    tier_text = "①25歳以上で総合80未満 → ②24歳で総合75未満 → ③23歳で総合70未満 → ④それ以外"
+    parts = {t: (f"{lo}歳以上" if hi >= 99 else f"{lo}歳") + f"で総合{need}未満" for t, lo, hi, need in RELEASE_TIERS}
+    parts[RELEASE_OLD_TIER] = f"{RELEASE_OLD_AGE}歳以上で予測最大{RELEASE_OLD_PMAX}以下"
+    parts[RELEASE_LAST_TIER] = f"それ以外で予測最大{RELEASE_SAFE_PMAX}未満"
+    tier_text = " → ".join(TIER_MARK[t] + parts[t] for t in sorted(parts))
+    n_lock = cls["育成の固定"]
     mins = "・".join(f"{k}{v}人" for k, v in ROLE_MIN.items())
     return cls, {
         "人数": headcount(cls),
         "支配下の目標": list(TARGET_REGISTERED_PRE_DRAFT), "標準の目標": TARGET_REGISTERED_DEFAULT,
         "案": cls["案"],
         "満了": {"題": "育成契約満了", "行": cls["満了"],
-                 "説明": "今オフに育成契約が満了する選手。昇格の対象なら「支配下」、戦力外の人数に入れば「自由契約」、それ以外は「育成再契約」。"},
+                 "説明": "今オフに育成契約が満了する選手。昇格の対象なら「支配下」、戦力外の人数に入れば「自由契約」、それ以外は「育成再契約」。今の総合の高い順に並べています。"},
         "戦力外": {
             "育成": cls["候補"], "例外": cls["例外"], "次点の人数": RELEASE_NEXT_SHOW, "見込みの総合": RELEASE_SAFE_PMAX,
+            "固定の年目": RELEASE_LOCK_YEARS_PRO, "固定の人数": n_lock,
+            "年長の年齢": RELEASE_OLD_AGE, "年長の予測最大": RELEASE_OLD_PMAX,
             "説明": (f"ドラフト後に育成{TARGET_DEVELOPMENT_AFTER_DRAFT}人になる人数だけ、候補の上から戦力外にします。"
-                     f"候補は予測最大{RELEASE_SAFE_PMAX}未満の選手だけ（総合{RELEASE_SAFE_PMAX}以上の見込みがある選手は除外）。"
-                     f"優先順は {tier_text}（予測最大{RELEASE_SAFE_PMAX}未満）。同じ段階の中では予測最大の低い順です。"),
+                     f"プロ{RELEASE_LOCK_YEARS_PRO}年目までの育成選手は自由契約にできないので、候補に入れません（今回 {n_lock}人）。"
+                     f"候補は、予測最大{RELEASE_SAFE_PMAX}未満の選手と、{RELEASE_OLD_AGE}歳以上で予測最大{RELEASE_OLD_PMAX}以下の選手"
+                     f"（{RELEASE_OLD_AGE - 1}歳以下で総合{RELEASE_SAFE_PMAX}以上の見込みがある選手は除外）。"
+                     f"優先順は {tier_text}。①③④も予測最大{RELEASE_SAFE_PMAX}未満の選手だけです。同じ段階の中では予測最大の低い順です。"),
         },
         "説明": {
             "支配下": (f"プロ{LOCK_YEARS_PRO}年目までの支配下選手は育成にできないので枠は固定です。残りの枠には、{LOCK_YEARS_PRO + 1}年目以降の支配下選手と育成選手を総合の高い順に入れます。"
@@ -524,7 +558,8 @@ def build_plan(B, p0, own, rows, retired, ov_models, game_dt, out_path, draft_pa
     out["ドラフト"] = plan_draft
     out["注意"] = ("予測最大は「今後の見込み」で、設定ピーク年齢を過ぎた選手は過去の最高値を含めません（成長予測タブと同じ値です）。"
                    f"在籍選手の予測は±3〜4程度の誤差があります。"
-                   f"育成の戦力外で、予測最大が{RELEASE_SAFE_PMAX - RELEASE_BORDER}〜{RELEASE_SAFE_PMAX - 1}の候補には「境界」の印を付けています（誤差で候補から外れることがあります）。"
+                   f"育成の戦力外で、予測最大が基準のすぐ下（{RELEASE_SAFE_PMAX - RELEASE_BORDER}〜{RELEASE_SAFE_PMAX - 1}、"
+                   f"{RELEASE_OLD_AGE}歳以上は{RELEASE_OLD_PMAX - RELEASE_BORDER + 1}〜{RELEASE_OLD_PMAX}）の候補には「境界」の印を付けています（誤差で候補から外れることがあります）。"
                    "支配下の枠は総合の順位で決めているので、当落線の前後（次点）の選手は、ゲーム画面で起用状況を見てから決めてください。")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ": ")), encoding="utf-8")
@@ -555,7 +590,7 @@ def build_plan(B, p0, own, rows, retired, ov_models, game_dt, out_path, draft_pa
     log(f"  編成提案（目標{TARGET_REGISTERED_DEFAULT}人）: 支配下 {cls['現在']['支配下']}人のうち固定 {d['固定']}人・当落線 総合{d['当落線']}、"
         f"昇格 {len(d['昇格'])}人、育成へ {len(d['育成へ'])}人、自由契約 {len(d['自由契約'])}人、ポジション確保 {len(d['確保'])}人")
     log(f"  人数: 現在 支配下{cls['現在']['支配下']}・育成{cls['現在']['育成']} → ドラフト前 支配下{d['支配下']}・育成{d['育成']}（育成の戦力外の前）、"
-        f"契約満了 {len(cls['満了'])}人、育成の戦力外候補 {len(cls['候補'])}人")
+        f"契約満了 {len(cls['満了'])}人、育成の戦力外候補 {len(cls['候補'])}人（{RELEASE_LOCK_YEARS_PRO}年目までで対象外 {cls['育成の固定']}人）")
     if plan_draft.get("推奨", {}).get("文"):
         log("  " + plan_draft["推奨"]["文"])
     if scheduled:

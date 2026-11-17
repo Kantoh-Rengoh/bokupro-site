@@ -441,7 +441,8 @@
   function planCalc() {
     const hc = PLAN['人数'], R = PLAN['戦力外'], pk = planPicks();
     const A = PLAN['案'][PLV.target];
-    const cands = R['育成'] || [];
+    const up = new Set(A['昇格'].map(r => r['id']));
+    const cands = (R['育成'] || []).filter(r => !up.has(r['id']));   // 昇格する選手は戦力外の候補から外す
     const need = A['育成'] + pk['育成'] - hc['育成の目標'];      // 減らす必要がある人数（マイナスなら空き）
     const n = Math.max(0, Math.min(need, cands.length));
     const dev = { need, n, cut: cands.slice(0, n), next: cands.slice(n), short: Math.max(0, need - cands.length) };
@@ -482,10 +483,11 @@
       (A['当落線'] !== null && A['当落線'] !== undefined ? `（当落線は総合${A['当落線']}）` : '') +
       `。枠から外す ${out}人（育成へ ${A['育成へ'].length}人・自由契約 ${A['自由契約'].length}人）、育成から昇格 ${A['昇格'].length}人` +
       (A['確保'].length ? `、ポジション確保のため残す ${A['確保'].length}人` : '') + '。'));
-    const x = c.dev, g = hc['育成の目標'];
+    const x = c.dev, g = hc['育成の目標'], W = PLAN['戦力外'];
     let msg = `育成：入れ替え後 ${A['育成']}人 ＋ 指名 ${c.pk['育成']}人 − 目標 ${g}人 ＝ `;
     if (x.need <= 0) msg += `戦力外は不要（${x.need < 0 ? `あと${-x.need}人の空き` : 'ちょうど'}）`;
-    else msg += `戦力外 ${x.need}人` + (x.short ? `。ただし候補は${x.n}人まで（総合${PLAN['戦力外']['見込みの総合']}以上の見込みがある選手は残すため、あと${x.short}人は選べません）` : '');
+    else msg += `戦力外 ${x.need}人` + (x.short ? `。ただし候補は${x.n}人まで（${W['固定の年目'] ? `${W['固定の年目']}年目までの選手と、` : ''}総合${W['見込みの総合']}以上の見込みがある選手は残すため、あと${x.short}人は選べません）` : '');
+    if (W['固定の年目']) msg += `。${W['固定の年目']}年目まで（自由契約にできない）の ${W['固定の人数']}人は候補に入れていません`;
     box.append(el('div', 'count', msg));
   }
   function planSection(no, title, countText, desc, rows, emptyText) {
