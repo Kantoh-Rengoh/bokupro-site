@@ -327,7 +327,8 @@ h1 {
   .ptab td::before { content: attr(data-l); display: block; font-size: .62rem; color: var(--color-fg-muted); line-height: 1.2; }
   .ptab td.nm { grid-column: 1 / 4; grid-row: 1; font-size: var(--fs-body); align-self: center; }
   .ptab td.nm::before { content: none; }
-  .ptab td.jd { grid-column: 4; grid-row: 1; text-align: right; align-self: center; }
+  /* 判定のラベルが長いとき（残留（ポジション確保）など）は、右へはみ出さず左へ伸ばす */
+  .ptab td.jd { grid-column: 4; grid-row: 1; display: flex; justify-content: flex-end; align-self: center; white-space: nowrap; }
   .ptab td.jd::before { content: none; }
   .ptab td.rs { grid-column: 1 / -1; }
   .ptab td.rs::before { content: none; }

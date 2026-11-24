@@ -12,6 +12,8 @@ build.py から呼ばれ、次の2つを書き出す。
   ・支配下は、ドラフト前に目標人数（58〜60人。ページで切り替え）まで減らす
       - プロ1〜2年目の支配下選手は枠が固定（動かせない）
       - 残りの枠は「3年目以降の支配下選手」と「育成選手」を総合の高い順に並べて上から入れる
+        （下降期の選手は、直近2年の1年あたりの下がり幅を引いた「来季の見込み」で比べる）
+      - 育成契約満了で総合70以上の選手は育成再契約できない：予測最大86以上なら必ず支配下に入れ、それ以外は自由契約
         （育成選手が入れ替わるには、総合が一定以上で、支配下の選手を2以上上回る必要がある）
       - ポジションごとの最低人数を割るときは、そのポジションの選手を残して別の選手を外す
       - 枠から外れた支配下選手は、24歳以下または伸びしろ5以上なら「育成へ」、それ以外は「自由契約」
@@ -39,6 +41,12 @@ THIRD_SQUAD_BASE = 70          # 三軍の上限 = 合計 − この値
 LOCK_YEARS_PRO = 2             # プロ n 年目までの支配下選手は育成契約にできない（枠は固定）
 PROMOTE_FLOOR = 82             # 育成 → 支配下：総合がこれ以上の育成選手だけが昇格の対象
 PROMOTE_MARGIN = 2             # さらに、入れ替わる支配下選手より総合がこれだけ高いこと（僅差の入れ替えを防ぐ）
+# 下降期の選手は「来季の見込み」（総合 − 直近2年の1年あたりの下がり幅）で順位を付ける
+DECLINE_STATUS = "下降期"
+DECLINE_SHOW_MIN = 1           # 枠内に残る下降期の選手のうち、下がり幅がこれ以上の選手を「残留（下降中）」として見せる
+# 育成契約満了：総合がこれ以上の選手は育成再契約できない（支配下登録か自由契約のどちらか）
+EXPIRY_FORCE_OVERALL = 70
+EXPIRY_PROMOTE_PMAX = 86       # そのうち予測最大がこれ以上の選手は支配下登録、それ未満は自由契約
 ROLE_MIN = {"投手": 18, "捕手": 3, "内野手": 8, "外野手": 6}   # 支配下（3年目以降＋昇格）に最低これだけ残す
 # 枠から外れた支配下選手の行き先
 TO_DEV_MAX_AGE = 24            # この年齢以下、または
@@ -168,13 +176,33 @@ def release_border(tier, pmax):
     return pmax >= RELEASE_SAFE_PMAX - RELEASE_BORDER
 
 
+def decline_drop(status, overall, p):
+    """下降期の選手の、1年あたりの下がり幅（直近2年の平均。四捨五入した整数）と、その根拠の (2年前, 今)"""
+    if status != DECLINE_STATUS:
+        return 0, None
+    hist = [h.get("overall100") for h in (p.get("abilityHistory") or []) if h.get("overall100") is not None]
+    if len(hist) >= 2:          # 去年の開幕時 → 今（2年分）
+        base, years = hist[-2], 2
+    elif len(hist) == 1:        # 今年の開幕時 → 今（1年分）
+        base, years = hist[-1], 1
+    else:
+        return 0, None
+    drop = (base - overall) / years
+    if drop <= 0:
+        return 0, None
+    return int(drop + 0.5), (int(round(base)), years)
+
+
 def _row_base(r, p):
+    drop, basis = decline_drop(r["状態"], r["現在"], p)
     return {
         "id": r["id"], "名前": r["名前"], "背番号": r["背番号"], "年齢": r["年齢"],
         "ポジ": ROLE_SHORT.get(r["役割"], ""), "役割": r["役割"], "所属": r["所属"],
         "総合": r["現在"], "予測最大": r["_fut"], "伸びしろ": max(0, r["_fut"] - r["現在"]),
         "状態": r["状態"], "外国人": bool(p.get("foreign")), "年目": p.get("yearsPro"),
         "ドラフト順位": r["ドラフト順位"], "将来性": r["将来性"], "二刀流": bool(r.get("二刀流")),
+        "下がり幅": drop, "見込み": r["現在"] - drop,
+        "下降の根拠": (f"{basis[1]}年で{basis[0]}→{r['現在']}" if basis else ""),
     }
 
 
@@ -203,15 +231,23 @@ def destination(b):
     return "戦力外", f"{TO_DEV_MAX_AGE + 1}歳以上で伸びしろ{TO_DEV_MIN_UPSIDE - 1}以下"
 
 
+def _decline_note(b):
+    return f"（下降期・{b['下降の根拠']}、来季見込み{b['見込み']}）" if b["下がり幅"] else ""
+
+
 def registered_plan(regs, devs, target):
     """支配下の枠を決める。regs: 支配下の行、devs: 育成の行、target: ドラフト前の支配下の目標人数。
-    戻り値: dict(固定, 枠, 当落線, 昇格, 育成へ, 自由契約, 次点, 確保, 支配下, 育成)"""
+    戻り値: dict(固定, 枠, 当落線, 昇格, 育成へ, 自由契約, 次点, 確保, 下降中, 満了の支配下, 満了の自由契約, 支配下, 育成)"""
     locked = [b for b in regs if (b["年目"] or 0) <= LOCK_YEARS_PRO]
     inc = [b for b in regs if (b["年目"] or 0) > LOCK_YEARS_PRO]
-    slots = max(0, target - len(locked))
-    # 順位付け：支配下はそのままの総合、育成は「総合 − PROMOTE_MARGIN」で比べる（同点は支配下を優先）
-    pool = [(b["総合"], 1, b["予測最大"], b) for b in inc]
-    pool += [(b["総合"] - PROMOTE_MARGIN, 0, b["予測最大"], b) for b in devs if b["総合"] >= PROMOTE_FLOOR]
+    # 育成契約満了で総合が高い選手は育成再契約できない：予測最大が高ければ必ず支配下に入れる
+    exp_hi = [b for b in devs if b["満了"] and b["総合"] >= EXPIRY_FORCE_OVERALL]
+    must = [b for b in exp_hi if b["予測最大"] >= EXPIRY_PROMOTE_PMAX]
+    must_ids = {b["id"] for b in must}
+    slots = max(0, target - len(locked) - len(must))
+    # 順位付け：「来季の見込み」（下降期でなければ総合と同じ）で比べる。育成は見込み − PROMOTE_MARGIN（同点は支配下を優先）
+    pool = [(b["見込み"], 1, b["予測最大"], b) for b in inc]
+    pool += [(b["見込み"] - PROMOTE_MARGIN, 0, b["予測最大"], b) for b in devs if b["総合"] >= PROMOTE_FLOOR and b["id"] not in must_ids]
     pool.sort(key=lambda t: (-t[0], -t[1], -t[2], t[3]["年齢"]))
     sel = pool[:slots]
     rest = pool[slots:]
@@ -219,8 +255,8 @@ def registered_plan(regs, devs, target):
     guarded = []
     for _ in range(len(pool)):
         cnt = {}
-        for t in sel:
-            cnt[t[3]["役割"]] = cnt.get(t[3]["役割"], 0) + 1
+        for b in [t[3] for t in sel] + must:
+            cnt[b["役割"]] = cnt.get(b["役割"], 0) + 1
         short = [r for r, m in ROLE_MIN.items() if cnt.get(r, 0) < m]
         if not short:
             break
@@ -235,20 +271,31 @@ def registered_plan(regs, devs, target):
         rest.sort(key=lambda t: (-t[0], -t[1], -t[2], t[3]["年齢"]))
     sel_ids = {t[3]["id"] for t in sel}
     kept = [t[3] for t in sel if t[1] == 1]
-    line = min((b["総合"] for b in kept if b["id"] not in guarded), default=None)
+    line = min((b["見込み"] for b in kept if b["id"] not in guarded), default=None)
     promoted = [_mark(t[3], "昇格", f"総合{t[3]['総合']}（支配下の当落線{line}を{PROMOTE_MARGIN}以上上回る）" if line is not None else f"総合{PROMOTE_FLOOR}以上")
                 for t in sel if t[1] == 0]
+    order = lambda x: (x["見込み"], x["総合"], x["予測最大"], -x["年齢"])
     to_dev, release = [], []
-    for b in sorted([b for b in inc if b["id"] not in sel_ids], key=lambda x: (x["総合"], x["予測最大"], -x["年齢"])):
+    for b in sorted([b for b in inc if b["id"] not in sel_ids], key=order):
         verdict, why = destination(b)
-        (to_dev if verdict == "育成へ" else release).append(_mark(b, verdict, f"総合{b['総合']}で枠外・{why}"))
-    nxt = [_mark(b, "次点", f"総合{b['総合']}（当落線のすぐ上）")
-           for b in sorted([b for b in kept if b["id"] not in guarded], key=lambda x: (x["総合"], x["予測最大"], -x["年齢"]))[:RELEASE_NEXT_SHOW]]
-    keep = [_mark(b, "残留（ポジション確保）", f"{b['役割']}が最低{ROLE_MIN.get(b['役割'], 0)}人を割るため残す") for b in kept if b["id"] in guarded]
+        (to_dev if verdict == "育成へ" else release).append(_mark(b, verdict, f"総合{b['総合']}{_decline_note(b)}で枠外・{why}"))
+    free = sorted([b for b in kept if b["id"] not in guarded], key=order)
+    nxt = [_mark(b, "次点", f"総合{b['総合']}{_decline_note(b)}（当落線のすぐ上）") for b in free[:RELEASE_NEXT_SHOW]]
+    keep = [_mark(b, "残留（ポジション確保）", f"{b['役割']}が最低{ROLE_MIN.get(b['役割'], 0)}人を割るため残す" + (f"。{_decline_note(b)[1:-1]}" if b["下がり幅"] else ""))
+            for b in kept if b["id"] in guarded]
+    # 枠内に残るが、下がっている下降期の選手（見落とさないように見せる）
+    falling = [_mark(b, "残留（下降中）", f"下降期・{b['下降の根拠']}。来季見込み{b['見込み']}でも当落線{line}以上なので残す")
+               for b in sorted(free[RELEASE_NEXT_SHOW:], key=order) if b["下がり幅"] >= DECLINE_SHOW_MIN]
+    # 育成契約満了で総合が高い選手：支配下に入らなければ自由契約（育成再契約はできない）
+    exp_up = [_mark(b, "支配下", f"総合{EXPIRY_FORCE_OVERALL}以上で満了・予測最大{b['予測最大']}（{EXPIRY_PROMOTE_PMAX}以上）") for b in must]
+    exp_out = [_mark(b, "自由契約", f"総合{EXPIRY_FORCE_OVERALL}以上で満了（育成再契約できない）・予測最大{b['予測最大']}（{EXPIRY_PROMOTE_PMAX}未満）")
+               for b in exp_hi if b["id"] not in must_ids and b["id"] not in sel_ids]
     return {
         "固定": len(locked), "枠": slots, "当落線": line,
-        "昇格": _sort_rows(promoted), "育成へ": to_dev, "自由契約": release, "次点": nxt, "確保": keep,
-        "支配下": len(locked) + len(sel), "育成": len(devs) - len(promoted) + len(to_dev),
+        "昇格": _sort_rows(promoted), "育成へ": to_dev, "自由契約": release, "次点": nxt, "確保": keep, "下降中": falling,
+        "満了の支配下": exp_up, "満了の自由契約": exp_out,
+        "支配下": len(locked) + len(sel) + len(must),
+        "育成": len(devs) - len(promoted) - len(must) + len(to_dev) - len(exp_out),
     }
 
 
@@ -509,7 +556,10 @@ def plan_core(rows, expiry_ids, B):
         "支配下の目標": list(TARGET_REGISTERED_PRE_DRAFT), "標準の目標": TARGET_REGISTERED_DEFAULT,
         "案": cls["案"],
         "満了": {"題": "育成契約満了", "行": cls["満了"],
-                 "説明": "今オフに育成契約が満了する選手。昇格の対象なら「支配下」、戦力外の人数に入れば「自由契約」、それ以外は「育成再契約」。今の総合の高い順に並べています。"},
+                 "説明": ("今オフに育成契約が満了する選手。昇格の対象なら「支配下」、戦力外の人数に入れば「自由契約」、それ以外は「育成再契約」。"
+                         f"ただし総合{EXPIRY_FORCE_OVERALL}以上で満了した選手は育成再契約ができないので、予測最大{EXPIRY_PROMOTE_PMAX}以上（または昇格の対象）なら「支配下」、それ以外は「自由契約」です。"
+                         "今の総合の高い順に並べています。"),
+                 "強制の総合": EXPIRY_FORCE_OVERALL, "支配下の予測最大": EXPIRY_PROMOTE_PMAX},
         "戦力外": {
             "育成": cls["候補"], "例外": cls["例外"], "次点の人数": RELEASE_NEXT_SHOW, "見込みの総合": RELEASE_SAFE_PMAX,
             "固定の年目": RELEASE_LOCK_YEARS_PRO, "固定の人数": n_lock,
@@ -522,6 +572,7 @@ def plan_core(rows, expiry_ids, B):
         },
         "説明": {
             "支配下": (f"プロ{LOCK_YEARS_PRO}年目までの支配下選手は育成にできないので枠は固定です。残りの枠には、{LOCK_YEARS_PRO + 1}年目以降の支配下選手と育成選手を総合の高い順に入れます。"
+                       f"下降期の選手は、直近2年の下がり幅（1年あたり）を引いた「来季の見込み」で順位を付けます。"
                        f"枠から外れた支配下選手は、{TO_DEV_MAX_AGE}歳以下または伸びしろ{TO_DEV_MIN_UPSIDE}以上なら「育成へ」、それ以外（下降期・外国人・予測最大{RELEASE_SAFE_PMAX}未満を含む）は「自由契約」です。"
                        f"ポジションの最低人数（{mins}）を割るときは、そのポジションの選手を残します。"),
             "昇格": f"総合{PROMOTE_FLOOR}以上の育成選手のうち、支配下の当落線を{PROMOTE_MARGIN}以上上回る選手を昇格させます（その分、支配下の下位が枠から外れます）。",

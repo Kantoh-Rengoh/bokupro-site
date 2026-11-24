@@ -43,7 +43,7 @@
   const JD_VAR = { '推奨': 'var(--color-bad)', '自由契約': 'var(--color-bad)', '検討': 'var(--color-warn)', '育成再契約': 'var(--color-warn)',
     '即昇格': 'var(--color-ok)', '先行昇格': 'var(--color-ok)', '支配下': 'var(--color-ok)', '育成へ': 'var(--s-new)',
     '残留（例外）': 'var(--c7)', '残留（検証中）': 'var(--c7)', '1位': 'var(--gold)', '外れ1位': 'var(--c5)',
-    '戦力外': 'var(--color-bad)', '次点': 'var(--color-warn)', '昇格': 'var(--color-ok)', '残留（ポジション確保）': 'var(--c7)' };
+    '戦力外': 'var(--color-bad)', '次点': 'var(--color-warn)', '昇格': 'var(--color-ok)', '残留（ポジション確保）': 'var(--c7)', '残留（下降中）': 'var(--color-warn)', '支配下': 'var(--color-ok)' };
 
   // ---------- 小さな道具 ----------
   const $ = (id) => document.getElementById(id);
@@ -441,8 +441,9 @@
   function planCalc() {
     const hc = PLAN['人数'], R = PLAN['戦力外'], pk = planPicks();
     const A = PLAN['案'][PLV.target];
-    const up = new Set(A['昇格'].map(r => r['id']));
-    const cands = (R['育成'] || []).filter(r => !up.has(r['id']));   // 昇格する選手は戦力外の候補から外す
+    // 昇格する選手と、契約満了で行き先が決まっている選手（総合の高い満了選手）は戦力外の候補から外す
+    const up = new Set(A['昇格'].concat(A['満了の支配下'] || [], A['満了の自由契約'] || []).map(r => r['id']));
+    const cands = (R['育成'] || []).filter(r => !up.has(r['id']));
     const need = A['育成'] + pk['育成'] - hc['育成の目標'];      // 減らす必要がある人数（マイナスなら空き）
     const n = Math.max(0, Math.min(need, cands.length));
     const dev = { need, n, cut: cands.slice(0, n), next: cands.slice(n), short: Math.max(0, need - cands.length) };
@@ -479,12 +480,15 @@
     }
     box.append(t);
     const out = A['育成へ'].length + A['自由契約'].length;
+    const expUp = A['満了の支配下'] || [], expOut = A['満了の自由契約'] || [];
     box.append(el('div', 'count', `支配下：1〜2年目（育成にできない）${A['固定']}人は固定。残り ${A['枠']}枠を、3年目以降と育成の選手の総合順で決めます` +
       (A['当落線'] !== null && A['当落線'] !== undefined ? `（当落線は総合${A['当落線']}）` : '') +
-      `。枠から外す ${out}人（育成へ ${A['育成へ'].length}人・自由契約 ${A['自由契約'].length}人）、育成から昇格 ${A['昇格'].length}人` +
-      (A['確保'].length ? `、ポジション確保のため残す ${A['確保'].length}人` : '') + '。'));
+      `。枠から外す ${out}人（育成へ ${A['育成へ'].length}人・自由契約 ${A['自由契約'].length}人）、育成から昇格 ${A['昇格'].length + expUp.length}人` +
+      (expUp.length ? `（うち契約満了で支配下登録 ${expUp.length}人）` : '') +
+      (A['確保'].length ? `、ポジション確保のため残す ${A['確保'].length}人` : '') +
+      ((A['下降中'] || []).length ? `、下降中だが枠内に残る ${A['下降中'].length}人` : '') + '。'));
     const x = c.dev, g = hc['育成の目標'], W = PLAN['戦力外'];
-    let msg = `育成：入れ替え後 ${A['育成']}人 ＋ 指名 ${c.pk['育成']}人 − 目標 ${g}人 ＝ `;
+    let msg = `育成：入れ替え後 ${A['育成']}人` + (expOut.length ? `（契約満了で自由契約にするしかない ${expOut.length}人を除いた人数）` : '') + ` ＋ 指名 ${c.pk['育成']}人 − 目標 ${g}人 ＝ `;
     if (x.need <= 0) msg += `戦力外は不要（${x.need < 0 ? `あと${-x.need}人の空き` : 'ちょうど'}）`;
     else msg += `戦力外 ${x.need}人` + (x.short ? `。ただし候補は${x.n}人まで（${W['固定の年目'] ? `${W['固定の年目']}年目までの選手と、` : ''}総合${W['見込みの総合']}以上の見込みがある選手は残すため、あと${x.short}人は選べません）` : '');
     if (W['固定の年目']) msg += `。${W['固定の年目']}年目まで（自由契約にできない）の ${W['固定の人数']}人は候補に入れていません`;
@@ -510,11 +514,13 @@
     const nextD = c.dev.next.filter(r => !r['満了']).slice(0, nextN).map(r => mark(r, '次点'));
     const keepD = (R['例外'] || []).filter(r => !r['満了']);
     // 支配下 → 自由契約（次点＝当落線のすぐ上、残留＝ポジション確保）
-    const cutR = A['自由契約'], nextR = A['次点'], keepR = A['確保'];
-    // 育成契約満了
+    const cutR = A['自由契約'], nextR = A['次点'], keepR = A['確保'], fallR = A['下降中'] || [];
+    // 育成契約満了（総合の高い満了選手は、支配下登録か自由契約のどちらかに決まっている）
     const l5 = PLAN['満了'];
+    const fixE = {}; (A['満了の支配下'] || []).concat(A['満了の自由契約'] || []).forEach(r => { fixE[r['id']] = r; });
     const rowsE = l5['行'].map(r => {
       if (promoted.has(r['id'])) return mark(r, '支配下', '昇格の対象');
+      if (fixE[r['id']]) return mark(r, fixE[r['id']]['判定'], fixE[r['id']]['理由']);
       if (cutDev.has(r['id'])) return mark(r, '自由契約', devRank[r['id']] ? devRank[r['id']]['理由'] : r['理由']);
       return mark(r, '育成再契約', devRank[r['id']] ? `候補だが今回の人数には入らず（${devRank[r['id']]['理由']}）` : r['理由']);
     });
@@ -529,9 +535,9 @@
         desc: '育成の戦力外のうち、契約満了ではない選手。「次点」は今回の人数には入らなかった候補です。例外リストの選手は「残留（検証中）」。 ' + R['説明'],
         empty: c.dev.need <= 0 ? '戦力外は不要です（育成に空きがあります）。' : '該当する選手はいません。' },
       { key: 'c2f', mark: '②', title: '支配下 → 自由契約', k: 'var(--color-bad)', n: cutR.length,
-        sub: [nextR.length ? `次点 ${nextR.length}人` : '', keepR.length ? `確保 ${keepR.length}人` : ''].filter(Boolean).join('・'),
-        count: `戦力外 ${cutR.length}人` + (nextR.length ? `・次点 ${nextR.length}人` : '') + (keepR.length ? `・ポジション確保 ${keepR.length}人` : ''),
-        rows: cutR.concat(nextR, keepR), desc: (D['支配下'] || '') + '「次点」は当落線のすぐ上にいる選手、「残留（ポジション確保）」は総合では枠外だがポジションの最低人数のために残す選手です。',
+        sub: [nextR.length ? `次点 ${nextR.length}人` : '', keepR.length ? `確保 ${keepR.length}人` : '', fallR.length ? `下降中 ${fallR.length}人` : ''].filter(Boolean).join('・'),
+        count: `戦力外 ${cutR.length}人` + (nextR.length ? `・次点 ${nextR.length}人` : '') + (keepR.length ? `・ポジション確保 ${keepR.length}人` : '') + (fallR.length ? `・下降中 ${fallR.length}人` : ''),
+        rows: cutR.concat(nextR, keepR, fallR), desc: (D['支配下'] || '') + '「次点」は当落線のすぐ上にいる選手、「残留（ポジション確保）」は総合では枠外だがポジションの最低人数のために残す選手、「残留（下降中）」は能力が下がっているが来季の見込みでもまだ枠内に入る選手です。',
         empty: '枠から外れて自由契約になる選手はいません。' },
       { key: 'exp', mark: '③', title: '育成契約満了', k: 'var(--color-warn)', n: rowsE.length, sub: rowsE.length ? `支配下${nE('支配下')}・再契約${nE('育成再契約')}・自由契約${nE('自由契約')}` : '',
         count: `${rowsE.length}人（支配下 ${nE('支配下')}・育成再契約 ${nE('育成再契約')}・自由契約 ${nE('自由契約')}）`, rows: rowsE, desc: l5['説明'],
